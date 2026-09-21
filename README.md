@@ -21,7 +21,21 @@ ag, _ := tinyagent.New(tinyagent.Config{Model: model})
 reply, _ := ag.Chat(ctx, "session-1", "用一句话介绍 Go")
 ```
 
-注册工具、消费事件流的完整示例见 [`examples/`](examples/)。
+完整示例见 [`examples/`](examples/)：
+
+| 示例 | 说明 | 需要 API |
+|---|---|---|
+| [`offline`](examples/offline) | 工具 + Hook + 事件流 + 审计全流程 | 否 |
+| [`panicsafe`](examples/panicsafe) | 崩溃隔离：工具 panic 后宿主存活 | 否 |
+| [`customrunner`](examples/customrunner) | 整体替换 agent loop | 否 |
+| [`quickstart`](examples/quickstart) | 最小接入 | 是 |
+| [`tools`](examples/tools) | 工具注册与事件消费 | 是 |
+
+```bash
+go run ./examples/offline        # 无需任何凭据
+go run ./examples/panicsafe
+go run ./examples/customrunner
+```
 
 ## 为什么
 
