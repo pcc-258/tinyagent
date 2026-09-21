@@ -9,6 +9,8 @@ import (
 type Request struct {
 	// Messages 是本次要发送的消息序列。
 	Messages []Message
+	// System 是系统提示；为空表示不发送。
+	System string
 	// Tools 是可用工具的定义。
 	Tools []ToolInfo
 	// Model 是模型名；为空时由适配器使用默认值。

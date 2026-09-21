@@ -36,6 +36,13 @@ func NewSession(id string) *Session {
 	}
 }
 
+// Len 返回消息条数。
+func (s *Session) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.messages)
+}
+
 // Messages 返回消息序列的副本。
 func (s *Session) Messages() []Message {
 	s.mu.Lock()

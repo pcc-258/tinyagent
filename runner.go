@@ -14,6 +14,10 @@ import (
 type RunnerOptions struct {
 	// Model 是必需的模型实现。
 	Model Model
+	// System 是系统提示，随每次模型调用发送。
+	System string
+	// ContextBudget 是上下文 token 预算；<=0 表示不做上下文处理。
+	ContextBudget int
 	// Tools 是可调用的工具集合。
 	Tools []Tool
 	// Store 是会话持久化实现。
