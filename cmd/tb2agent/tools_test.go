@@ -1,0 +1,69 @@
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestRunShell(t *testing.T) {
+	res, err := runShell(context.Background(), t.TempDir(), shellArgs{
+		Command: "printf 'hello' && exit 3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Content, "exit_code=3") {
+		t.Errorf("content = %q, want exit_code=3", res.Content)
+	}
+	if !strings.Contains(res.Content, "hello") {
+		t.Errorf("content = %q, want captured stdout", res.Content)
+	}
+}
+
+func TestWriteReadFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "a.txt")
+	written, err := writeFile(writeFileArgs{Path: path, Content: "line1\nline2\nline3\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(written.Content, "wrote 18 bytes") {
+		t.Errorf("write result = %q", written.Content)
+	}
+
+	read, err := readFile(readFileArgs{Path: path, StartLine: 2, EndLine: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read.Content, "line2") || strings.Contains(read.Content, "line1") {
+		t.Errorf("read result = %q, want only line2", read.Content)
+	}
+}
+
+func TestGrepAndFind(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// TODO fix\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# readme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	grep, err := grepSearch(dir, grepArgs{Pattern: "TODO", Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(grep.Content, "main.go") {
+		t.Errorf("grep result = %q, want main.go match", grep.Content)
+	}
+
+	found, err := findFiles(dir, findFilesArgs{Root: dir, Pattern: "*.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(found.Content, "main.go") || strings.Contains(found.Content, "README.md") {
+		t.Errorf("find result = %q, want only main.go", found.Content)
+	}
+}

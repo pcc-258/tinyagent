@@ -1,0 +1,95 @@
+name: TB2
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model name passed to tb2agent
+        required: false
+        default: deepseek-v4-flash
+      agent:
+        description: Harbor agent; use oracle for a no-API-key pipeline smoke
+        required: false
+        default: tinyagent_agent:TinyAgentAgent
+      include_task_name:
+        description: Terminal-Bench 2 task name or glob
+        required: false
+        default: "*fix-git*"
+      n_tasks:
+        description: Maximum number of tasks to run
+        required: false
+        default: "1"
+      max_iterations:
+        description: Maximum TinyAgent loop iterations
+        required: false
+        default: "32"
+      timeout_sec:
+        description: Total agent run timeout in seconds
+        required: false
+        default: "600"
+
+permissions:
+  contents: read
+
+jobs:
+  tb2-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build tb2agent
+        run: go build -trimpath -ldflags "-s -w" -o /tmp/tb2agent ./cmd/tb2agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install Harbor
+        run: uv tool install harbor
+
+      - name: Require model API key
+        if: inputs.agent != 'oracle'
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Set the TINYAGENT_API_KEY repository secret to run TB2."
+            exit 1
+          fi
+        env:
+          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
+
+      - name: Run Terminal-Bench 2 smoke
+        env:
+          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.TINYAGENT_BASE_URL }}
+          OPENAI_MODEL: ${{ inputs.model }}
+          PYTHONPATH: ${{ github.workspace }}/benchmark/harbor
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          AGENT="${{ inputs.agent }}"
+          if [ "$AGENT" = "oracle" ]; then
+            harbor run --dataset terminal-bench@2.0 \
+              --agent oracle \
+              --include-task-name "${{ inputs.include_task_name }}" \
+              --n-tasks "${{ inputs.n_tasks }}" \
+              --n-concurrent 1 \
+              --yes
+          else
+            harbor run --dataset terminal-bench@2.0 \
+              --agent "$AGENT" \
+              --model "${{ inputs.model }}" \
+              --include-task-name "${{ inputs.include_task_name }}" \
+              --n-tasks "${{ inputs.n_tasks }}" \
+              --n-concurrent 1 \
+              --agent-kwarg binary_path=/tmp/tb2agent \
+              --agent-kwarg max_iterations=${{ inputs.max_iterations }} \
+              --agent-kwarg timeout_sec=${{ inputs.timeout_sec }} \
+              --yes
+          fi

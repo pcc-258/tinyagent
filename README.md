@@ -130,6 +130,15 @@ cp examples/config.yaml.example examples/config.yaml
 
 `examples/config.yaml` is gitignored.
 
+## Benchmark
+
+To measure TinyAgent's practical usefulness, the repository includes a small
+[Terminal-Bench 2](docs/BENCHMARK.md) harness: `cmd/tb2agent` is a disposable
+coding agent built on the TinyAgent kernel, and `.github/workflows/tb2.yml` can
+run a TB2 smoke job from GitHub Actions. E2E tests live in `e2e/` and run with
+`go test ./...` in CI using a local OpenAI-compatible server, so they need no
+API credentials.
+
 ## Packages
 
 | Package | Role |
