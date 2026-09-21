@@ -71,12 +71,17 @@ func TestHookChain_Mutation(t *testing.T) {
 }
 
 func TestHookChain_NilFiltered(t *testing.T) {
-	chain := newHookChain([]Hook{nil, HookFuncs{}, nil})
+	chain := newHookChain([]Hook{nil, nil})
 	if !chain.Empty() {
-		t.Error("expected empty chain after filtering nil")
+		t.Error("expected empty chain after filtering nil slots")
 	}
 	if err := chain.beforeModelCall(context.Background(), &Request{}); err != nil {
 		t.Errorf("empty chain should be no-op: %v", err)
+	}
+
+	chain2 := newHookChain([]Hook{HookFuncs{}})
+	if chain2.Empty() {
+		t.Error("HookFuncs{} is a valid no-op hook and must not be filtered")
 	}
 }
 
