@@ -5,21 +5,27 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
-	"tinyagent"
-	"tinyagent/model/openai"
+	"github.com/pcc-258/tinyagent"
+	"github.com/pcc-258/tinyagent/examples/internal/config"
+	"github.com/pcc-258/tinyagent/model/openai"
 )
 
 func main() {
-	model := openai.New(openai.Config{
-		BaseURL: os.Getenv("OPENAI_BASE_URL"),
-		Model:   os.Getenv("OPENAI_MODEL"),
+	cfg, err := config.Load(config.DefaultPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mdl := openai.New(openai.Config{
+		APIKey:  cfg.APIKey,
+		BaseURL: cfg.BaseURL,
+		Model:   cfg.Model,
 	})
 
 	ag, err := tinyagent.New(tinyagent.Config{
-		Model:  model,
-		System: "你是一个简洁的助手。",
+		Model:  mdl,
+		System: cfg.System,
 	})
 	if err != nil {
 		log.Fatal(err)

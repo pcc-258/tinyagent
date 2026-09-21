@@ -10,8 +10,9 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"tinyagent"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
+	"github.com/pcc-258/tinyagent/tool"
 )
 
 const (
@@ -32,7 +33,7 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-// Client 实现 tinyagent.Model 与 tinyagent.StreamingModel。
+// Client 实现 model.Model 与 model.StreamingModel。
 type Client struct {
 	apiKey  string
 	baseURL string
@@ -115,7 +116,7 @@ type wireResponse struct {
 
 // --- 转换 ---
 
-func toWireMessages(msgs []tinyagent.Message) []wireMessage {
+func toWireMessages(msgs []core.Message) []wireMessage {
 	out := make([]wireMessage, 0, len(msgs))
 	for _, m := range msgs {
 		wm := wireMessage{
@@ -137,9 +138,9 @@ func toWireMessages(msgs []tinyagent.Message) []wireMessage {
 	return out
 }
 
-func fromWireMessage(m wireMessage) tinyagent.Message {
-	out := tinyagent.Message{
-		Role:       tinyagent.Role(m.Role),
+func fromWireMessage(m wireMessage) core.Message {
+	out := core.Message{
+		Role:       core.Role(m.Role),
 		Content:    m.Content,
 		ToolCallID: m.ToolCallID,
 		Name:       m.Name,
@@ -149,7 +150,7 @@ func fromWireMessage(m wireMessage) tinyagent.Message {
 		if args == "" {
 			args = "{}"
 		}
-		out.ToolCalls = append(out.ToolCalls, tinyagent.ToolCall{
+		out.ToolCalls = append(out.ToolCalls, core.ToolCall{
 			ID:        tc.ID,
 			Name:      tc.Function.Name,
 			Arguments: json.RawMessage(args),
@@ -158,7 +159,7 @@ func fromWireMessage(m wireMessage) tinyagent.Message {
 	return out
 }
 
-func toWireTools(tools []tinyagent.ToolInfo) []wireTool {
+func toWireTools(tools []tool.ToolInfo) []wireTool {
 	out := make([]wireTool, 0, len(tools))
 	for _, t := range tools {
 		var wt wireTool
@@ -177,7 +178,7 @@ func toWireTools(tools []tinyagent.ToolInfo) []wireTool {
 
 // --- 请求 ---
 
-func (c *Client) buildRequest(req tinyagent.Request, stream bool) wireRequest {
+func (c *Client) buildRequest(req model.Request, stream bool) wireRequest {
 	model := req.Model
 	if model == "" {
 		model = c.model
@@ -204,47 +205,47 @@ func (c *Client) newRequest(ctx context.Context, body io.Reader) (*http.Request,
 	return httpReq, nil
 }
 
-// Generate 实现 tinyagent.Model。
-func (c *Client) Generate(ctx context.Context, req tinyagent.Request) (tinyagent.Response, error) {
+// Generate 实现 model.Model。
+func (c *Client) Generate(ctx context.Context, req model.Request) (model.Response, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(c.buildRequest(req, false)); err != nil {
-		return tinyagent.Response{}, fmt.Errorf("openai: encode request: %w", err)
+		return model.Response{}, fmt.Errorf("openai: encode request: %w", err)
 	}
 
 	httpReq, err := c.newRequest(ctx, &buf)
 	if err != nil {
-		return tinyagent.Response{}, fmt.Errorf("openai: build request: %w", err)
+		return model.Response{}, fmt.Errorf("openai: build request: %w", err)
 	}
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
-		return tinyagent.Response{}, fmt.Errorf("openai: do request: %w", err)
+		return model.Response{}, fmt.Errorf("openai: do request: %w", err)
 	}
 	defer httpResp.Body.Close()
 
 	raw, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return tinyagent.Response{}, fmt.Errorf("openai: read response: %w", err)
+		return model.Response{}, fmt.Errorf("openai: read response: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return tinyagent.Response{}, fmt.Errorf("openai: http %d: %s", httpResp.StatusCode, truncate(string(raw), 512))
+		return model.Response{}, fmt.Errorf("openai: http %d: %s", httpResp.StatusCode, truncate(string(raw), 512))
 	}
 
 	var wr wireResponse
 	if err := json.Unmarshal(raw, &wr); err != nil {
-		return tinyagent.Response{}, fmt.Errorf("openai: decode response: %w", err)
+		return model.Response{}, fmt.Errorf("openai: decode response: %w", err)
 	}
 	if wr.Error != nil {
-		return tinyagent.Response{}, fmt.Errorf("openai: %s", wr.Error.Message)
+		return model.Response{}, fmt.Errorf("openai: %s", wr.Error.Message)
 	}
 	if len(wr.Choices) == 0 {
-		return tinyagent.Response{}, fmt.Errorf("openai: response has no choices")
+		return model.Response{}, fmt.Errorf("openai: response has no choices")
 	}
 
 	choice := wr.Choices[0]
-	return tinyagent.Response{
+	return model.Response{
 		Message: fromWireMessage(choice.Message),
-		Usage: tinyagent.Usage{
+		Usage: core.Usage{
 			PromptTokens:     wr.Usage.PromptTokens,
 			CompletionTokens: wr.Usage.CompletionTokens,
 			TotalTokens:      wr.Usage.TotalTokens,

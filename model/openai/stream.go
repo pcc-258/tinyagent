@@ -10,8 +10,8 @@ import (
 	"iter"
 	"net/http"
 	"strings"
-
-	"tinyagent"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
 )
 
 type wireStreamChunk struct {
@@ -28,35 +28,35 @@ type wireStreamChunk struct {
 	} `json:"error"`
 }
 
-// Stream 实现 tinyagent.StreamingModel。
+// Stream 实现 model.StreamingModel。
 //
 // 工具调用的 name 与 id 只在首片出现，arguments 分多片到达；
-// 本方法只做透传，聚合由 tinyagent.ToolCallAccumulator 完成。
-func (c *Client) Stream(ctx context.Context, req tinyagent.Request) iter.Seq2[tinyagent.Chunk, error] {
-	return func(yield func(tinyagent.Chunk, error) bool) {
+// 本方法只做透传，聚合由 model.ToolCallAccumulator 完成。
+func (c *Client) Stream(ctx context.Context, req model.Request) iter.Seq2[model.Chunk, error] {
+	return func(yield func(model.Chunk, error) bool) {
 		var body bytes.Buffer
 		if err := json.NewEncoder(&body).Encode(c.buildRequest(req, true)); err != nil {
-			yield(tinyagent.Chunk{}, fmt.Errorf("openai: encode request: %w", err))
+			yield(model.Chunk{}, fmt.Errorf("openai: encode request: %w", err))
 			return
 		}
 
 		httpReq, err := c.newRequest(ctx, &body)
 		if err != nil {
-			yield(tinyagent.Chunk{}, fmt.Errorf("openai: build request: %w", err))
+			yield(model.Chunk{}, fmt.Errorf("openai: build request: %w", err))
 			return
 		}
 		httpReq.Header.Set("Accept", "text/event-stream")
 
 		httpResp, err := c.http.Do(httpReq)
 		if err != nil {
-			yield(tinyagent.Chunk{}, fmt.Errorf("openai: do request: %w", err))
+			yield(model.Chunk{}, fmt.Errorf("openai: do request: %w", err))
 			return
 		}
 		defer httpResp.Body.Close()
 
 		if httpResp.StatusCode != http.StatusOK {
 			raw, _ := io.ReadAll(httpResp.Body)
-			yield(tinyagent.Chunk{}, fmt.Errorf("openai: http %d: %s", httpResp.StatusCode, truncate(string(raw), 512)))
+			yield(model.Chunk{}, fmt.Errorf("openai: http %d: %s", httpResp.StatusCode, truncate(string(raw), 512)))
 			return
 		}
 
@@ -74,13 +74,13 @@ func (c *Client) Stream(ctx context.Context, req tinyagent.Request) iter.Seq2[ti
 
 			var sc wireStreamChunk
 			if err := json.Unmarshal([]byte(payload), &sc); err != nil {
-				if !yield(tinyagent.Chunk{}, fmt.Errorf("openai: decode stream chunk: %w", err)) {
+				if !yield(model.Chunk{}, fmt.Errorf("openai: decode stream chunk: %w", err)) {
 					return
 				}
 				continue
 			}
 			if sc.Error != nil {
-				yield(tinyagent.Chunk{}, fmt.Errorf("openai: %s", sc.Error.Message))
+				yield(model.Chunk{}, fmt.Errorf("openai: %s", sc.Error.Message))
 				return
 			}
 			if len(sc.Choices) == 0 {
@@ -90,12 +90,12 @@ func (c *Client) Stream(ctx context.Context, req tinyagent.Request) iter.Seq2[ti
 			delta := sc.Choices[0].Delta
 
 			if delta.Content != "" {
-				if !yield(tinyagent.Chunk{TextDelta: delta.Content}, nil) {
+				if !yield(model.Chunk{TextDelta: delta.Content}, nil) {
 					return
 				}
 			}
 			for _, tc := range delta.ToolCalls {
-				if !yield(tinyagent.Chunk{ToolCall: &tinyagent.ToolCallDelta{
+				if !yield(model.Chunk{ToolCall: &model.ToolCallDelta{
 					Index:          tc.Index,
 					ID:             tc.ID,
 					Name:           tc.Function.Name,
@@ -105,7 +105,7 @@ func (c *Client) Stream(ctx context.Context, req tinyagent.Request) iter.Seq2[ti
 				}
 			}
 			if sc.Usage != nil {
-				if !yield(tinyagent.Chunk{Usage: &tinyagent.Usage{
+				if !yield(model.Chunk{Usage: &core.Usage{
 					PromptTokens:     sc.Usage.PromptTokens,
 					CompletionTokens: sc.Usage.CompletionTokens,
 					TotalTokens:      sc.Usage.TotalTokens,
@@ -114,14 +114,14 @@ func (c *Client) Stream(ctx context.Context, req tinyagent.Request) iter.Seq2[ti
 				}
 			}
 			if fr := sc.Choices[0].FinishReason; fr != "" {
-				if !yield(tinyagent.Chunk{FinishReason: fr}, nil) {
+				if !yield(model.Chunk{FinishReason: fr}, nil) {
 					return
 				}
 			}
 		}
 
 		if err := scanner.Err(); err != nil {
-			yield(tinyagent.Chunk{}, fmt.Errorf("openai: read stream: %w", err))
+			yield(model.Chunk{}, fmt.Errorf("openai: read stream: %w", err))
 		}
 	}
 }

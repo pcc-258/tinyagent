@@ -7,25 +7,28 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
+	"github.com/pcc-258/tinyagent/store"
 
-	"tinyagent"
+	"github.com/pcc-258/tinyagent"
 )
 
 type fixedModel struct{}
 
-func (fixedModel) Generate(_ context.Context, _ tinyagent.Request) (tinyagent.Response, error) {
-	return tinyagent.Response{Message: tinyagent.Message{Role: tinyagent.RoleAssistant, Content: "来自模型"}}, nil
+func (fixedModel) Generate(_ context.Context, _ model.Request) (model.Response, error) {
+	return model.Response{Message: core.Message{Role: core.RoleAssistant, Content: "来自模型"}}, nil
 }
 
 // echoRunner 是一个极简的自定义 Runner：不调用模型，直接回显输入。
 // 它满足 Runner 接口，因此可以整体替换内置的 ReActRunner。
 type echoRunner struct{}
 
-func (echoRunner) Run(_ context.Context, _ *tinyagent.Session, input string) iter.Seq2[tinyagent.Event, error] {
-	return func(yield func(tinyagent.Event, error) bool) {
-		yield(tinyagent.Event{Type: tinyagent.EventRunStart}, nil)
-		yield(tinyagent.Event{Type: tinyagent.EventText, Text: "echo: " + input}, nil)
-		yield(tinyagent.Event{Type: tinyagent.EventRunEnd}, nil)
+func (echoRunner) Run(_ context.Context, _ *store.Session, input string) iter.Seq2[core.Event, error] {
+	return func(yield func(core.Event, error) bool) {
+		yield(core.Event{Type: core.EventRunStart}, nil)
+		yield(core.Event{Type: core.EventText, Text: "echo: " + input}, nil)
+		yield(core.Event{Type: core.EventRunEnd}, nil)
 	}
 }
 

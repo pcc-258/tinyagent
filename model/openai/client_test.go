@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"tinyagent"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
 )
 
 func TestGenerate(t *testing.T) {
@@ -40,8 +40,8 @@ func TestGenerate(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{APIKey: "test-key", BaseURL: srv.URL, Model: "test-model"})
-	resp, err := c.Generate(context.Background(), tinyagent.Request{
-		Messages: []tinyagent.Message{{Role: tinyagent.RoleUser, Content: "hi"}},
+	resp, err := c.Generate(context.Background(), model.Request{
+		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestGenerate_ToolCalls(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL})
-	resp, err := c.Generate(context.Background(), tinyagent.Request{})
+	resp, err := c.Generate(context.Background(), model.Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestGenerate_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL})
-	if _, err := c.Generate(context.Background(), tinyagent.Request{}); err == nil {
+	if _, err := c.Generate(context.Background(), model.Request{}); err == nil {
 		t.Fatal("expected error on HTTP 401")
 	}
 }
@@ -118,7 +118,7 @@ func TestStream_Text(t *testing.T) {
 
 	c := New(Config{BaseURL: srv.URL})
 	var text, finish string
-	for chunk, err := range c.Stream(context.Background(), tinyagent.Request{}) {
+	for chunk, err := range c.Stream(context.Background(), model.Request{}) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,8 +157,8 @@ func TestStream_ToolCallFragments(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{BaseURL: srv.URL})
-	acc := tinyagent.NewToolCallAccumulator()
-	for chunk, err := range c.Stream(context.Background(), tinyagent.Request{}) {
+	acc := model.NewToolCallAccumulator()
+	for chunk, err := range c.Stream(context.Background(), model.Request{}) {
 		if err != nil {
 			t.Fatal(err)
 		}

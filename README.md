@@ -14,20 +14,34 @@ TinyAgent 是一个可以直接 `import` 进你程序的 agent 库。
 
 ## 快速开始
 
-```go
-model := openai.New(openai.Config{Model: "deepseek-chat"})
+```bash
+go get github.com/pcc-258/tinyagent
+```
 
-ag, _ := tinyagent.New(tinyagent.Config{Model: model})
+```go
+import (
+	"github.com/pcc-258/tinyagent"
+	"github.com/pcc-258/tinyagent/model/openai"
+)
+
+mdl := openai.New(openai.Config{
+	APIKey:  "sk-...",
+	BaseURL: "https://api.deepseek.com/v1",
+	Model:   "deepseek-v4-flash",
+})
+
+ag, _ := tinyagent.New(tinyagent.Config{Model: mdl})
 reply, _ := ag.Chat(ctx, "session-1", "用一句话介绍 Go")
 ```
 
-凭据通过环境变量提供，任意 OpenAI 兼容端点均可：
+任意 OpenAI 兼容端点均可。`quickstart` / `tools` 示例从 `examples/config.yaml` 读取凭据：
 
 ```bash
-export OPENAI_API_KEY=sk-...
-export OPENAI_BASE_URL=https://api.deepseek.com/v1
-export OPENAI_MODEL=deepseek-v4-flash
+cp examples/config.yaml.example examples/config.yaml
+# 编辑 config.yaml，填入 api_key / base_url / model
 ```
+
+`config.yaml` 含密钥，已在 `.gitignore` 中排除。
 
 完整示例见 [`examples/`](examples/)：
 
@@ -43,6 +57,9 @@ export OPENAI_MODEL=deepseek-v4-flash
 go run ./examples/offline        # 无需任何凭据
 go run ./examples/panicsafe
 go run ./examples/customrunner
+
+go run ./examples/quickstart     # 需要 examples/config.yaml
+go run ./examples/tools
 ```
 
 ## 为什么
@@ -69,6 +86,23 @@ go run ./examples/customrunner
 | M6 | Hook | 同步拦截点 |
 | M7 | Model | 与 LLM 交互的唯一边界 |
 
+## 包结构
+
+| 包 | 模块 | 内容 |
+|---|---|---|
+| `tinyagent` | 门面 | `Agent` + `Config`，装配各模块 |
+| `tinyagent/core` | — | 数据模型（`Message` / `Event` / `Usage` / `Error`）+ 崩溃安全 |
+| `tinyagent/model` | M7 | `Model` / `StreamingModel` 接口 + 流式聚合 |
+| `tinyagent/model/openai` | M7 | OpenAI 兼容适配器 |
+| `tinyagent/tool` | M2 | `Tool` 接口 + 泛型注册 + schema |
+| `tinyagent/store` | M3 | `Store` 接口 + 内存实现 + `Session` |
+| `tinyagent/ctxmgr` | M4 | 上下文管理策略 + 计数器 |
+| `tinyagent/hook` | M6 | `Hook` 接口 + 链式组合 |
+| `tinyagent/audit` | M5 | `Audit` 接口 + 内存实现 |
+| `tinyagent/runner` | M1 | `Runner` 接口 + `ReActRunner` |
+
+接入方通常只需 `import "github.com/pcc-258/tinyagent"`；实现自定义模块时再 import 对应子包。
+
 ## 能力边界
 
 **保证做到**：捕获所有组件回调里的 panic（含库自身默认组件），三通道上报，绝不静默。
@@ -84,4 +118,4 @@ go run ./examples/customrunner
 
 ## License
 
-待定。
+[MIT](LICENSE) © 2026 pcc-258

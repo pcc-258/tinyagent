@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 	"testing"
-
-	"tinyagent"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
 )
 
 // TestRealAPI 真实调用一次模型端点，验证 wire 格式与端到端链路。
@@ -25,8 +25,8 @@ func TestRealAPI(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	resp, err := client.Generate(ctx, tinyagent.Request{
-		Messages: []tinyagent.Message{{Role: tinyagent.RoleUser, Content: "Reply with exactly one word: pong"}},
+	resp, err := client.Generate(ctx, model.Request{
+		Messages: []core.Message{{Role: core.RoleUser, Content: "Reply with exactly one word: pong"}},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -37,8 +37,8 @@ func TestRealAPI(t *testing.T) {
 	t.Logf("generate -> %q (usage: prompt=%d completion=%d)", resp.Message.Content, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 
 	var streamed string
-	for chunk, err := range client.Stream(ctx, tinyagent.Request{
-		Messages: []tinyagent.Message{{Role: tinyagent.RoleUser, Content: "Count from 1 to 3, digits only."}},
+	for chunk, err := range client.Stream(ctx, model.Request{
+		Messages: []core.Message{{Role: core.RoleUser, Content: "Count from 1 to 3, digits only."}},
 	}) {
 		if err != nil {
 			t.Fatalf("Stream: %v", err)

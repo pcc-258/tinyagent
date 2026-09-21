@@ -7,31 +7,34 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
+	"github.com/pcc-258/tinyagent/tool"
 
-	"tinyagent"
+	"github.com/pcc-258/tinyagent"
 )
 
 type emptyArgs struct{}
 
 type boomModel struct{ next int }
 
-func (m *boomModel) Generate(_ context.Context, _ tinyagent.Request) (tinyagent.Response, error) {
+func (m *boomModel) Generate(_ context.Context, _ model.Request) (model.Response, error) {
 	m.next++
 	if m.next == 1 {
-		return tinyagent.Response{Message: tinyagent.Message{
-			Role:      tinyagent.RoleAssistant,
-			ToolCalls: []tinyagent.ToolCall{{ID: "c1", Name: "explode", Arguments: []byte(`{}`)}},
+		return model.Response{Message: core.Message{
+			Role:      core.RoleAssistant,
+			ToolCalls: []core.ToolCall{{ID: "c1", Name: "explode", Arguments: []byte(`{}`)}},
 		}}, nil
 	}
-	return tinyagent.Response{Message: tinyagent.Message{
-		Role:    tinyagent.RoleAssistant,
+	return model.Response{Message: core.Message{
+		Role:    core.RoleAssistant,
 		Content: "工具崩了，但运行还在继续。",
 	}}, nil
 }
 
 func main() {
-	boom, err := tinyagent.NewFuncTool("explode", "总会 panic 的工具",
-		func(_ context.Context, _ emptyArgs) (tinyagent.ToolResult, error) {
+	boom, err := tool.NewFuncTool("explode", "总会 panic 的工具",
+		func(_ context.Context, _ emptyArgs) (core.ToolResult, error) {
 			panic("模拟工具内部崩溃")
 		})
 	if err != nil {
@@ -40,7 +43,7 @@ func main() {
 
 	ag, err := tinyagent.New(tinyagent.Config{
 		Model: &boomModel{},
-		Tools: []tinyagent.Tool{boom},
+		Tools: []tool.Tool{boom},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -51,12 +54,12 @@ func main() {
 			log.Fatal(err)
 		}
 		switch ev.Type {
-		case tinyagent.EventPanic:
+		case core.EventPanic:
 			fmt.Printf("[panic 已捕获] 组件=%s 值=%v 堆栈=%d 字节\n",
 				ev.Panic.Component, ev.Panic.Value, len(ev.Panic.Stack))
-		case tinyagent.EventToolResult:
+		case core.EventToolResult:
 			fmt.Printf("[tool_result] 模型看到的软错误: %s\n", ev.ToolResult.Error)
-		case tinyagent.EventText:
+		case core.EventText:
 			fmt.Printf("[text] %s\n", ev.Text)
 		}
 	}

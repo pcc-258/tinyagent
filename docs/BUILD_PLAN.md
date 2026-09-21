@@ -43,30 +43,68 @@ tinyagent/
 │   ├── VISION.md              愿景（已定稿）
 │   └── BUILD_PLAN.md          本文件
 │
-├── (根包 tinyagent)            ← 核心，只用 stdlib
+├── (根包 tinyagent)            门面：装配各模块
+│   └── agent.go               Agent 门面 + Config
+│
+├── core/                      数据模型与横切（只用 stdlib）
 │   ├── message.go             Role / Message / ToolCall / ToolResult
 │   ├── event.go               Event / EventType
 │   ├── usage.go               Usage
 │   ├── errors.go              Error / ErrorKind / PanicPolicy
 │   ├── recover.go             ★ 崩溃安全机制（横切）
-│   ├── model.go               Model 接口 + Request / Response / Chunk
-│   ├── tool.go                Tool 接口 + ToolInfo + 泛型注册
-│   ├── store.go               Store 接口 + 内存实现
-│   ├── context.go             Counter / Compressor 接口 + 默认策略
-│   ├── hook.go                Hook 接口 + 链式组合
-│   ├── audit.go               Audit 接口 + 内存实现
-│   ├── session.go             Session
-│   ├── runner.go              Runner 接口 + ReActRunner
-│   └── agent.go               Agent 门面 + Config
+│   └── clone.go               深拷贝辅助
 │
-├── model/
+├── model/                     M7 · 与 LLM 交互的唯一边界
+│   ├── model.go               Model / StreamingModel 接口 + Request / Response / Chunk
+│   ├── accum.go               流式工具调用聚合
 │   └── openai/                OpenAI 兼容适配器（stdlib HTTP + SSE）
+│
+├── tool/                      M2 · 工具注册与 schema
+│   ├── tool.go                Tool 接口 + ToolInfo
+│   ├── func.go                泛型 FuncTool
+│   ├── registry.go            注册表
+│   └── schema.go              反射生成 JSON Schema
+│
+├── store/                     M3 · 会话状态
+│   ├── store.go               Store 接口 + SessionSnapshot
+│   ├── memory.go              内存实现
+│   └── session.go             Session（内存态、内部加锁）
+│
+├── ctxmgr/                    M4 · 上下文管理
+│   ├── ctxmgr.go              Counter / ContextStrategy / ContextManager 接口
+│   ├── default.go             默认管理器
+│   ├── strategy.go            截断 / 卸载策略
+│   └── counter.go             启发式计数器
+│
+├── hook/                      M6 · 同步拦截点
+│   ├── hook.go                Hook 接口
+│   └── chain.go               链式组合
+│
+├── audit/                     M5 · 行为审计
+│   ├── audit.go               Audit 接口 + AuditRecord
+│   └── memory.go              内存实现
+│
+├── runner/                    M1 · Agent Loop
+│   ├── runner.go              Runner 接口 + RunnerOptions
+│   └── react.go               ReActRunner
 │
 └── examples/
     └── quickstart/main.go     端到端示例
 ```
 
+**依赖严格单向**，无循环：
+
+```
+根包 tinyagent
+  └─→ runner ─→ { store, ctxmgr, hook, audit, tool, model, core }
+                └─→ model ─→ { tool, core }
+                    └─→ tool ─→ core
+                        └─→ core（无内部依赖）
+```
+
 **第一版全部只用 stdlib**，因此适配器可以放在同一 module 的子包里，不会引入外部依赖。
+
+接入方通常只需 `import "github.com/pcc-258/tinyagent"`；需要实现自定义模块（如自定义 `Model`、`Tool`）时，再 import 对应的子包。
 
 ---
 
@@ -113,17 +151,17 @@ tinyagent/
 **目标**：把 VISION §6 的模块边界落成 Go 类型与接口。
 
 **交付物**
-- `message.go`：`Role` / `Message` / `ToolCall` / `ToolResult`
-- `event.go`：`Event` / `EventType`
-- `usage.go`：`Usage`
-- `errors.go`：`Error` / `ErrorKind` / `PanicPolicy`
-- `model.go`：`Model` / `StreamingModel` 接口 + `Request` / `Response` / `Chunk`
-- `tool.go`：`Tool` 接口 + `ToolInfo`
-- `store.go`：`Store` 接口 + `SessionSnapshot`
-- `context.go`：`Counter` / `Compressor` 接口
-- `hook.go`：`Hook` 接口
-- `audit.go`：`Audit` 接口
-- `runner.go`：`Runner` 接口 + `RunnerOptions`
+- `core/message.go`：`Role` / `Message` / `ToolCall` / `ToolResult`
+- `core/event.go`：`Event` / `EventType`
+- `core/usage.go`：`Usage`
+- `core/errors.go`：`Error` / `ErrorKind` / `PanicPolicy`
+- `model/model.go`：`Model` / `StreamingModel` 接口 + `Request` / `Response` / `Chunk`
+- `tool/tool.go`：`Tool` 接口 + `ToolInfo`
+- `store/store.go`：`Store` 接口 + `SessionSnapshot`
+- `ctxmgr/ctxmgr.go`：`Counter` / `Compressor` 接口
+- `hook/hook.go`：`Hook` 接口
+- `audit/audit.go`：`Audit` 接口
+- `runner/runner.go`：`Runner` 接口 + `RunnerOptions`
 
 **验收**：`go vet ./...` 通过；每个导出符号有文档注释；接口只表达"做什么"不表达"怎么做"。
 
@@ -141,7 +179,7 @@ tinyagent/
 **目标**：实现 VISION §4.1 / §4.3 的保证。**这是头号亮点，必须最早验证。**
 
 **交付物**
-- `recover.go`：统一的 recover 包装器
+- `core/recover.go`：统一的 recover 包装器
 - 三通道上报：error 返回 + Event 推送 + `slog` 日志
 - `PanicPolicy` 三种策略：`RecoverAsToolError`（默认）/ `FailRun` / `Propagate`
 
@@ -163,7 +201,7 @@ tinyagent/
 **目标**：把宿主能力暴露给模型。
 
 **交付物**
-- `tool.go` 完善：`ToolInfo`（name / description / JSON Schema）
+- `tool/tool.go` 完善：`ToolInfo`（name / description / JSON Schema）
 - 泛型注册：从 Go 结构体反射生成参数 schema
 - 参数解析与校验
 - 执行包装：超时 + panic 捕获 + 错误分类
@@ -187,7 +225,7 @@ tinyagent/
 **目标**：打通与 LLM 的真实交互。
 
 **交付物**
-- `model.go` 完善：`Request` / `Response` / `Chunk` 完整定义
+- `model/model.go` 完善：`Request` / `Response` / `Chunk` 完整定义
 - `model/openai/`：OpenAI 兼容协议适配器（stdlib `net/http`）
   - 非流式生成
   - 流式生成（SSE）
@@ -212,8 +250,8 @@ tinyagent/
 **目标**：状态能存能取，多轮对话成立。
 
 **交付物**
-- `store.go`：内存 `Store` 实现（默认）
-- `session.go`：`Session`（内存态、内部加锁、并发运行拒绝）
+- `store/store.go`：内存 `Store` 实现（默认）
+- `store/session.go`：`Session`（内存态、内部加锁、并发运行拒绝）
 - `SessionSnapshot` 与 `Session` 的转换
 
 **验收**
@@ -234,7 +272,7 @@ tinyagent/
 **目标**：实现 VISION §6.4 M4 —— 全部上下文处理策略。
 
 **交付物**
-- `context.go` 完善：
+- `ctxmgr/ctxmgr.go` 完善：
   - `Counter`：默认 token 估算（覆盖消息 + 工具 schema + 系统提示 + 固定开销）
   - `Compressor`：默认策略（第一版至少实现**截断**与**压缩**两种）
   - 保护规则：系统提示、最近 N 轮、工具配对不可动
@@ -258,7 +296,7 @@ tinyagent/
 **目标**：接入方同步介入 agent 行为。
 
 **交付物**
-- `hook.go` 完善：链式组合 + 四个拦截点（模型调用前后、工具调用前后）
+- `hook/hook.go` 完善：链式组合 + 四个拦截点（模型调用前后、工具调用前后）
 - 允许修改请求 / 工具参数
 - 允许否决（返回错误中断该次调用或整个运行）
 
@@ -278,7 +316,7 @@ tinyagent/
 **目标**：agent 行为可追溯。**第一版标准功能。**
 
 **交付物**
-- `audit.go`：`Audit` 接口 + 内存实现
+- `audit/audit.go`：`Audit` 接口 + 内存实现
 - 记录点：会话生命周期、模型调用、工具调用、panic、上下文处理、Hook 否决
 - 查询 / 导出能力
 
@@ -299,7 +337,7 @@ tinyagent/
 **目标**：把前面所有模块串成一个循环。
 
 **交付物**
-- `runner.go` 完善：`RunnerOptions` 注入面、默认 `ReActRunner`
+- `runner/runner.go` 完善：`RunnerOptions` 注入面、默认 `ReActRunner`
 - 迭代控制：上限、超时、终止条件
 - 并行工具编排 + **结果保序**
 - 事件产出（流式）

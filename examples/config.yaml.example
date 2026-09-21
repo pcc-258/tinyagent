@@ -1,0 +1,16 @@
+# TinyAgent 示例配置模板
+#
+# 复制为 config.yaml 并填入真实凭据：
+#   cp examples/config.yaml.example examples/config.yaml
+#
+# config.yaml 已在 .gitignore 中排除，不会被提交。
+
+api_key: sk-your-api-key
+base_url: https://api.deepseek.com/v1
+model: deepseek-v4-flash
+
+# Agent 行为参数（可选）
+system: 你是一个简洁的助手。
+max_iterations: 16
+context_budget: 128000
+timeout: 60s
