@@ -2,7 +2,7 @@
 
 > 进程内嵌的 Go agent 内核 —— 几行代码，让你的程序拥有一个完整的 agent。
 
-**状态：早期开发中。** 进度见 [构建计划](docs/BUILD_PLAN.md)。
+**状态：v0.1 核心已可用。** 进度见 [构建计划](docs/BUILD_PLAN.md)。
 
 ---
 
@@ -12,14 +12,16 @@ TinyAgent 是一个可以直接 `import` 进你程序的 agent 库。
 
 不需要启动 CLI，不需要 sidecar，不需要和外部 agent 进程通信。就是函数调用。
 
+## 快速开始
+
 ```go
-// 目标形态（尚未实现）
-ag, _ := tinyagent.New(tinyagent.Config{Model: "deepseek-chat"})
-ag.Tool("get_weather", "查询天气", getWeather)
-for ev, err := range ag.Run(ctx, "session-1", "北京今天天气怎么样") {
-    // ...
-}
+model := openai.New(openai.Config{Model: "deepseek-chat"})
+
+ag, _ := tinyagent.New(tinyagent.Config{Model: model})
+reply, _ := ag.Chat(ctx, "session-1", "用一句话介绍 Go")
 ```
+
+注册工具、消费事件流的完整示例见 [`examples/`](examples/)。
 
 ## 为什么
 
