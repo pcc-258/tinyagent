@@ -21,6 +21,14 @@ ag, _ := tinyagent.New(tinyagent.Config{Model: model})
 reply, _ := ag.Chat(ctx, "session-1", "用一句话介绍 Go")
 ```
 
+凭据通过环境变量提供，任意 OpenAI 兼容端点均可：
+
+```bash
+export OPENAI_API_KEY=sk-...
+export OPENAI_BASE_URL=https://api.deepseek.com/v1
+export OPENAI_MODEL=deepseek-v4-flash
+```
+
 完整示例见 [`examples/`](examples/)：
 
 | 示例 | 说明 | 需要 API |
