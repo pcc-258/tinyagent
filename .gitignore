@@ -1,0 +1,33 @@
+# Binaries and build output
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+
+# Go workspace / vendoring
+go.work
+go.work.sum
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Agent tooling state
+.omo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config / secrets
+.env
+*.local
