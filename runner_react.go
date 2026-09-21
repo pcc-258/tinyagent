@@ -7,6 +7,7 @@ import (
 	"iter"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -294,62 +295,87 @@ func (r *ReActRunner) toolTurn(
 	resp *Response,
 	yield func(Event, error) bool,
 ) bool {
-	for i := range resp.Message.ToolCalls {
-		call := resp.Message.ToolCalls[i]
+	calls := resp.Message.ToolCalls
+	n := len(calls)
 
-		if !yield(Event{Type: EventToolCall, ToolCall: &call, Time: time.Now()}, nil) {
+	results := make([]ToolResult, n)
+	panics := make([]*PanicInfo, n)
+	runnable := make([]bool, n)
+	startedAt := make([]time.Time, n)
+
+	for i := range calls {
+		if !yield(Event{Type: EventToolCall, ToolCall: &calls[i], Time: time.Now()}, nil) {
 			return false
 		}
+		startedAt[i] = time.Now()
 
-		res, panicInfo := r.execTool(ctx, s.ID, runID, &call)
+		if err := r.hooks.beforeToolCall(ctx, &calls[i]); err != nil {
+			results[i] = ToolResult{ToolCallID: calls[i].ID, Error: "rejected by hook: " + err.Error()}
+			r.recordAudit(ctx, s.ID, runID, AuditHookReject, "hook", map[string]any{
+				"tool": calls[i].Name,
+				"err":  err.Error(),
+			}, time.Since(startedAt[i]))
+			continue
+		}
+		runnable[i] = true
+	}
 
-		if panicInfo != nil {
-			if !yield(Event{Type: EventPanic, Panic: panicInfo, Time: time.Now()}, nil) {
+	concurrency := n
+	if r.opts.SequentialTools {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := range calls {
+		if !runnable[i] {
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i], panics[i] = r.runTool(ctx, &calls[i])
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range calls {
+		if panics[i] != nil {
+			if !yield(Event{Type: EventPanic, Panic: panics[i], Time: time.Now()}, nil) {
 				return false
 			}
 			if r.opts.PanicPolicy == PanicFailRun {
-				err := newError(ErrKindPanic, panicInfo.Component, "tool", fmt.Errorf("panic: %v", panicInfo.Value))
+				err := newError(ErrKindPanic, panics[i].Component, "tool", fmt.Errorf("panic: %v", panics[i].Value))
 				yield(Event{Type: EventRunEnd, Err: err, Time: time.Now()}, err)
 				return false
 			}
 		}
 
-		if !yield(Event{Type: EventToolResult, ToolResult: &res, Time: time.Now()}, nil) {
-			return false
+		if runnable[i] {
+			if err := r.hooks.afterToolCall(ctx, &calls[i], &results[i]); err != nil {
+				r.logger.Error("tinyagent: AfterToolCall hook failed",
+					slog.String("tool", calls[i].Name), slog.Any("error", err))
+			}
+			r.recordAudit(ctx, s.ID, runID, AuditToolCall, "tool:"+calls[i].Name, map[string]any{
+				"is_error": results[i].IsError(),
+				"args":     string(calls[i].Arguments),
+			}, time.Since(startedAt[i]))
 		}
 
-		s.Append(MessageFromToolResult(res))
+		if !yield(Event{Type: EventToolResult, ToolResult: &results[i], Time: time.Now()}, nil) {
+			return false
+		}
+		s.Append(MessageFromToolResult(results[i]))
 	}
 	return true
 }
 
-// execTool 执行单个工具：Hook → 查找 → 执行（含 panic 捕获）→ Hook → 审计。
-//
-// 工具返回的 error 是框架级失败，会被转成软错误喂回模型；
-// ToolResult.Error 则是工具主动报告的业务错误。两者都不中断循环。
-func (r *ReActRunner) execTool(
-	ctx context.Context,
-	sessionID, runID string,
-	call *ToolCall,
-) (ToolResult, *PanicInfo) {
-	startedAt := time.Now()
-
-	if err := r.hooks.beforeToolCall(ctx, call); err != nil {
-		res := ToolResult{ToolCallID: call.ID, Error: "rejected by hook: " + err.Error()}
-		r.recordAudit(ctx, sessionID, runID, AuditHookReject, "hook", map[string]any{
-			"tool": call.Name,
-			"err":  err.Error(),
-		}, time.Since(startedAt))
-		return res, nil
-	}
-
+// runTool 查找并执行工具，捕获其中的 panic。可安全并发调用。
+func (r *ReActRunner) runTool(ctx context.Context, call *ToolCall) (ToolResult, *PanicInfo) {
 	tool, ok := r.tools.Lookup(call.Name)
 	if !ok {
-		res := ToolResult{ToolCallID: call.ID, Error: fmt.Sprintf("unknown tool %q", call.Name)}
-		r.recordAudit(ctx, sessionID, runID, AuditToolCall, "tool:"+call.Name, map[string]any{
-			"error": "unknown tool",
-		}, time.Since(startedAt))
-		return res, nil
+		return ToolResult{ToolCallID: call.ID, Error: fmt.Sprintf("unknown tool %q", call.Name)}, nil
 	}
 
 	res, err := guardValue(r.guard, "tool:"+call.Name, func() (ToolResult, error) {
@@ -364,17 +390,6 @@ func (r *ReActRunner) execTool(
 		res = ToolResult{ToolCallID: call.ID, Error: err.Error()}
 	}
 	res.ToolCallID = call.ID
-
-	if hookErr := r.hooks.afterToolCall(ctx, call, &res); hookErr != nil {
-		r.logger.Error("tinyagent: AfterToolCall hook failed",
-			slog.String("tool", call.Name), slog.Any("error", hookErr))
-	}
-
-	r.recordAudit(ctx, sessionID, runID, AuditToolCall, "tool:"+call.Name, map[string]any{
-		"is_error": res.IsError(),
-		"args":     string(call.Arguments),
-	}, time.Since(startedAt))
-
 	return res, panicInfo
 }
 

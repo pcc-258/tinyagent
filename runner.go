@@ -18,6 +18,8 @@ type RunnerOptions struct {
 	System string
 	// ContextBudget 是上下文 token 预算；<=0 表示不做上下文处理。
 	ContextBudget int
+	// SequentialTools 为 true 时逐个执行工具；默认并行执行且结果保序。
+	SequentialTools bool
 	// Tools 是可调用的工具集合。
 	Tools []Tool
 	// Store 是会话持久化实现。

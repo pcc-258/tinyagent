@@ -33,6 +33,8 @@ type Config struct {
 	Counter Counter
 	// ContextBudget 是上下文 token 预算；<=0 时使用默认值。
 	ContextBudget int
+	// SequentialTools 为 true 时逐个执行工具；默认并行执行且结果保序。
+	SequentialTools bool
 	// Hooks 是按序执行的拦截器。
 	Hooks []Hook
 	// Audit 是审计记录器；为空时使用内存实现。
@@ -112,19 +114,20 @@ func New(cfg Config) (*Agent, error) {
 	}
 
 	runner, err := NewReActRunner(RunnerOptions{
-		Model:         cfg.Model,
-		System:        cfg.System,
-		Tools:         cfg.Tools,
-		Store:         store,
-		Context:       ctxMgr,
-		Counter:       counter,
-		Hooks:         cfg.Hooks,
-		Audit:         audit,
-		Logger:        logger,
-		MaxIterations: maxIter,
-		Timeout:       cfg.Timeout,
-		PanicPolicy:   cfg.PanicPolicy,
-		ContextBudget: budget,
+		Model:           cfg.Model,
+		System:          cfg.System,
+		Tools:           cfg.Tools,
+		Store:           store,
+		Context:         ctxMgr,
+		Counter:         counter,
+		Hooks:           cfg.Hooks,
+		Audit:           audit,
+		Logger:          logger,
+		MaxIterations:   maxIter,
+		Timeout:         cfg.Timeout,
+		PanicPolicy:     cfg.PanicPolicy,
+		ContextBudget:   budget,
+		SequentialTools: cfg.SequentialTools,
 	})
 	if err != nil {
 		return nil, err
