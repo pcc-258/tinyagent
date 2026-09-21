@@ -1,120 +1,162 @@
 # TinyAgent
 
-> 进程内嵌的 Go agent 内核 —— 几行代码，让你的程序拥有一个完整的 agent。
+[![CI](https://github.com/pcc-258/tinyagent/actions/workflows/ci.yml/badge.svg)](https://github.com/pcc-258/tinyagent/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/pcc-258/tinyagent.svg)](https://pkg.go.dev/github.com/pcc-258/tinyagent)
+[![Go Report Card](https://goreportcard.com/badge/github.com/pcc-258/tinyagent)](https://goreportcard.com/report/github.com/pcc-258/tinyagent)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**状态：v0.1 核心已可用。** 进度见 [构建计划](docs/BUILD_PLAN.md)。
+An embeddable AI agent kernel for Go. Import it, and a few lines of code give your
+program a complete agent loop — tool calling, context management, hooks, and audit —
+with no CLI, no sidecar, and no IPC.
 
----
+## Features
 
-## 这是什么
+- **In-process** — a plain Go library. No CLI, no daemon, no external agent process.
+- **Panic-safe** — a panic raised inside a tool, hook, or model adapter is recovered,
+  converted into an error, and reported. It never takes down your program.
+- **Zero-dependency core** — the core packages use the standard library only.
+- **Fully replaceable** — every module is an interface. Swap the store, the context
+  strategy, the hooks, or the entire agent loop.
+- **Streaming-first** — token-by-token events, with tool-call assembly handled for you.
 
-TinyAgent 是一个可以直接 `import` 进你程序的 agent 库。
-
-不需要启动 CLI，不需要 sidecar，不需要和外部 agent 进程通信。就是函数调用。
-
-## 快速开始
+## Install
 
 ```bash
 go get github.com/pcc-258/tinyagent
 ```
 
+Requires Go 1.26+.
+
+## Quick Start
+
 ```go
+package main
+
 import (
+	"context"
+	"fmt"
+	"log"
+
 	"github.com/pcc-258/tinyagent"
 	"github.com/pcc-258/tinyagent/model/openai"
 )
 
-mdl := openai.New(openai.Config{
-	APIKey:  "sk-...",
-	BaseURL: "https://api.deepseek.com/v1",
-	Model:   "deepseek-v4-flash",
-})
+func main() {
+	mdl := openai.New(openai.Config{
+		APIKey:  "sk-...",                      // or set OPENAI_API_KEY
+		BaseURL: "https://api.deepseek.com/v1", // any OpenAI-compatible endpoint
+		Model:   "deepseek-v4-flash",
+	})
 
-ag, _ := tinyagent.New(tinyagent.Config{Model: mdl})
-reply, _ := ag.Chat(ctx, "session-1", "用一句话介绍 Go")
+	ag, err := tinyagent.New(tinyagent.Config{
+		Model:  mdl,
+		System: "You are a concise assistant.",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	reply, err := ag.Chat(context.Background(), "session-1", "Explain Go in one sentence.")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(reply)
+}
 ```
 
-任意 OpenAI 兼容端点均可。`quickstart` / `tools` 示例从 `examples/config.yaml` 读取凭据：
+## Tools
+
+Register a tool from any typed Go function. Its JSON schema is derived from the
+parameter struct.
+
+```go
+type weatherArgs struct {
+	City string `json:"city" desc:"City name"`
+}
+
+weather, err := tool.NewFuncTool("get_weather", "Get the current weather for a city",
+	func(ctx context.Context, args weatherArgs) (core.ToolResult, error) {
+		return core.ToolResult{Content: args.City + ": sunny, 22°C"}, nil
+	})
+
+ag, _ := tinyagent.New(tinyagent.Config{
+	Model: mdl,
+	Tools: []tool.Tool{weather},
+})
+```
+
+## Streaming Events
+
+```go
+for ev, err := range ag.Run(ctx, "session-1", "What's the weather in Beijing?") {
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch ev.Type {
+	case core.EventText:
+		fmt.Print(ev.Text)
+	case core.EventToolCall:
+		fmt.Printf("\n[calling %s]\n", ev.ToolCall.Name)
+	case core.EventToolResult:
+		fmt.Printf("[result] %s\n", ev.ToolResult.Content)
+	}
+}
+```
+
+## Examples
+
+| Example | Description | API key |
+|---|---|---|
+| [`offline`](examples/offline) | Full flow: tools, hooks, event stream, audit | No |
+| [`panicsafe`](examples/panicsafe) | A panicking tool does not crash the host | No |
+| [`customrunner`](examples/customrunner) | Replace the agent loop entirely | No |
+| [`quickstart`](examples/quickstart) | Minimal integration | Yes |
+| [`tools`](examples/tools) | Tool registration and event consumption | Yes |
+
+Run the offline examples with no credentials:
+
+```bash
+go run ./examples/offline
+go run ./examples/panicsafe
+go run ./examples/customrunner
+```
+
+The two API-backed examples read credentials from `examples/config.yaml`:
 
 ```bash
 cp examples/config.yaml.example examples/config.yaml
-# 编辑 config.yaml，填入 api_key / base_url / model
+# then edit api_key / base_url / model
 ```
 
-`config.yaml` 含密钥，已在 `.gitignore` 中排除。
+`examples/config.yaml` is gitignored.
 
-完整示例见 [`examples/`](examples/)：
+## Packages
 
-| 示例 | 说明 | 需要 API |
-|---|---|---|
-| [`offline`](examples/offline) | 工具 + Hook + 事件流 + 审计全流程 | 否 |
-| [`panicsafe`](examples/panicsafe) | 崩溃隔离：工具 panic 后宿主存活 | 否 |
-| [`customrunner`](examples/customrunner) | 整体替换 agent loop | 否 |
-| [`quickstart`](examples/quickstart) | 最小接入 | 是 |
-| [`tools`](examples/tools) | 工具注册与事件消费 | 是 |
-
-```bash
-go run ./examples/offline        # 无需任何凭据
-go run ./examples/panicsafe
-go run ./examples/customrunner
-
-go run ./examples/quickstart     # 需要 examples/config.yaml
-go run ./examples/tools
-```
-
-## 为什么
-
-现有的 Go agent 方案，要么默认给你一个 CLI（`adk-go`），要么依赖很重，要么需要你手写工具循环（`langchaingo`）。TinyAgent 的取向不同：
-
-| 主张 | 含义 |
+| Package | Role |
 |---|---|
-| **进程内嵌** | 无 CLI、无 sidecar、无 IPC |
-| **崩溃不带崩主程序** | 接入方代码 panic、库组件 panic，一律捕获且可见 |
-| **状态完全自主** | 会话、消息、工具结果都是公开可读写的类型 |
-| **默认够用 + 不侵入可换** | 默认由作者选定；每个模块都能简单替换，包括 agent loop 本身 |
-| **零依赖核心** | 核心只用 stdlib |
+| `tinyagent` | Facade: `Agent` + `Config`, assembles the modules |
+| `tinyagent/core` | Data model: `Message`, `Event`, `Usage`, `Error` |
+| `tinyagent/model` | `Model` / `StreamingModel` interfaces |
+| `tinyagent/model/openai` | OpenAI-compatible adapter |
+| `tinyagent/tool` | `Tool` interface, generic registration, schema |
+| `tinyagent/store` | `Store` interface, in-memory implementation, `Session` |
+| `tinyagent/ctxmgr` | Context management strategies |
+| `tinyagent/hook` | Synchronous interception points |
+| `tinyagent/audit` | Immutable record of agent behavior |
+| `tinyagent/runner` | Agent loop |
 
-## 模块
+Most users only need `github.com/pcc-258/tinyagent`; import subpackages when
+implementing a custom module.
 
-| # | 模块 | 职责 |
-|---|---|---|
-| M1 | Agent Loop | 驱动「模型 → 工具 → 回填」迭代 |
-| M2 | Tool | 把宿主能力暴露给模型 |
-| M3 | Store | 会话状态的持久化契约 |
-| M4 | 上下文管理 | 全部上下文处理策略 |
-| M5 | Audit | agent 行为的不可变记录 |
-| M6 | Hook | 同步拦截点 |
-| M7 | Model | 与 LLM 交互的唯一边界 |
+## Panic Safety
 
-## 包结构
+TinyAgent recovers panics raised inside component callbacks — tools, hooks, and model
+adapters, including the built-in ones — converts them into errors, and reports them
+through three channels: the event stream, the audit log, and an optional callback.
+Nothing is swallowed silently.
 
-| 包 | 模块 | 内容 |
-|---|---|---|
-| `tinyagent` | 门面 | `Agent` + `Config`，装配各模块 |
-| `tinyagent/core` | — | 数据模型（`Message` / `Event` / `Usage` / `Error`）+ 崩溃安全 |
-| `tinyagent/model` | M7 | `Model` / `StreamingModel` 接口 + 流式聚合 |
-| `tinyagent/model/openai` | M7 | OpenAI 兼容适配器 |
-| `tinyagent/tool` | M2 | `Tool` 接口 + 泛型注册 + schema |
-| `tinyagent/store` | M3 | `Store` 接口 + 内存实现 + `Session` |
-| `tinyagent/ctxmgr` | M4 | 上下文管理策略 + 计数器 |
-| `tinyagent/hook` | M6 | `Hook` 接口 + 链式组合 |
-| `tinyagent/audit` | M5 | `Audit` 接口 + 内存实现 |
-| `tinyagent/runner` | M1 | `Runner` 接口 + `ReActRunner` |
-
-接入方通常只需 `import "github.com/pcc-258/tinyagent"`；实现自定义模块时再 import 对应子包。
-
-## 能力边界
-
-**保证做到**：捕获所有组件回调里的 panic（含库自身默认组件），三通道上报，绝不静默。
-
-**不保证**（进程级致命错误，任何进程内库都拦不住）：`os.Exit` · `runtime.Goexit` · 栈溢出 · OOM · 并发 map 写 · cgo 段错误。
-
-本库只承诺 *recovers panics raised inside component callbacks*，**不承诺 "never crash"**。
-
-## 文档
-
-- [愿景与架构](docs/VISION.md) —— 定位、边界、模块划分、设计原则
-- [构建计划](docs/BUILD_PLAN.md) —— 阶段划分、交付物、验收标准
+Process-level failures (`os.Exit`, `runtime.Goexit`, stack overflow, OOM, cgo
+segfaults) cannot be recovered by any in-process library and are out of scope.
 
 ## License
 
