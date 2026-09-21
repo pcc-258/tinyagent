@@ -41,7 +41,9 @@ func (s *Session) Messages() []Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]Message, len(s.messages))
-	copy(out, s.messages)
+	for i, m := range s.messages {
+		out[i] = cloneMessage(m)
+	}
 	return out
 }
 
@@ -68,7 +70,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 	defer s.mu.Unlock()
 	msgs := make([]Message, len(s.messages))
 	copy(msgs, s.messages)
-	return SessionSnapshot{ID: s.ID, Messages: msgs, Meta: s.Meta}
+	return SessionSnapshot{ID: s.ID, Messages: msgs, Meta: cloneMeta(s.Meta)}
 }
 
 // LoadFrom 用快照填充会话。
@@ -78,7 +80,7 @@ func (s *Session) LoadFrom(snap SessionSnapshot) {
 	s.messages = make([]Message, len(snap.Messages))
 	copy(s.messages, snap.Messages)
 	if snap.Meta != nil {
-		s.Meta = snap.Meta
+		s.Meta = cloneMeta(snap.Meta)
 	}
 }
 
