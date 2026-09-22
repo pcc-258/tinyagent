@@ -104,10 +104,10 @@ jobs:
               --yes
           fi
 
-      - name: Upload TB2 result
+      - name: Upload TB2 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tb2-result
-          path: jobs/**/result.json
+          name: tb2-results
+          path: jobs/**
           if-no-files-found: warn
