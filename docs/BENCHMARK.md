@@ -50,32 +50,29 @@ to keep the pipeline cheap.
 
 ## GitHub Actions
 
-Every pull request runs three chained stages in order:
+Every pull request automatically runs two free stages in order:
 
 1. `unit-tests` - `go build`, `go vet`, and race-enabled unit tests.
 2. `e2e-tests` - race-enabled E2E tests against a local OpenAI-compatible server.
-3. `tb2` - three low-cost Terminal-Bench 2 tasks with the real
-   `tinyagent_agent:TinyAgentAgent` model loop.
 
-The default PR smoke runs three low-cost tasks with an easy or medium
-difficulty and short expert time estimates:
+TB2 is manual only, triggered from the `TB2` workflow with `workflow_dispatch`,
+so pull requests and pushes never spend model tokens automatically. The manual
+default runs three low-cost tasks with an easy or medium difficulty and short
+expert time estimates:
 
 - `fix-git` (easy)
 - `git-leak-recovery` (medium)
 - `openssl-selfsigned-cert` (medium)
 
-To keep token spend bounded, the PR stage caps model output at 2048 tokens per
-call and limits the loop to 12 iterations. Use the manual `TB2` workflow when
-you want more tasks or different difficulty; its `max_tokens` and
-`max_iterations` inputs control cost.
+To keep token spend bounded, the manual defaults cap model output at 2048
+tokens per call and limit the loop to 12 iterations. Use the manual `TB2`
+workflow inputs when you want more tasks or different difficulty; `max_tokens`
+and `max_iterations` control cost.
 
 The `tb2` stage needs real LLM credentials:
 
 1. Add `TINYAGENT_API_KEY` as a repository secret.
 2. Optionally add `TINYAGENT_BASE_URL` and `TINYAGENT_MODEL` secrets.
 
-Until the key is configured, the `tb2` PR stage fails with a clear error, while
-the unit and E2E stages stay green. For manual large benchmark runs, use
-`.github/workflows/tb2.yml` with `workflow_dispatch`. It accepts task globs,
-`n_tasks`, and an `oracle` agent mode that uses checked-in reference solutions
-and needs no API key.
+The manual workflow accepts task globs, `n_tasks`, and an `oracle` agent mode
+that uses checked-in reference solutions and needs no API key.
