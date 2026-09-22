@@ -79,3 +79,22 @@ that uses checked-in reference solutions and needs no API key.
 Every manual run also uploads the Harbor `jobs/**` directory as a
 `tb2-results` artifact, including per-trial result.json, exception.txt,
 trial.log, and agent logs.
+
+## Coverage Notes
+
+The default three TB2 tasks are a smoke set: they verify that a default-built
+agent can explore a container, use shell/file tools, and complete short
+realistic tasks. They do **not** stress large contexts, long-horizon work, or
+context-management strategies.
+
+Those pressure paths are covered by the free automated E2E tests:
+
+- `TestAgentEndToEndLongContextBudget` fills a session with a long history and
+  asserts context actions fire and the model request is trimmed.
+- `TestAgentEndToEndLongToolChain` runs a 15-step tool loop through the public
+  Agent facade and asserts every call/result is preserved in order.
+
+For a more demanding LLM benchmark, run the manual `TB2` workflow with longer
+tasks such as `constraints-scheduling`, `kv-store-grpc`, or
+`large-scale-text-editing`. That increases runtime and token cost, so it is
+deliberately not part of the default smoke set.
