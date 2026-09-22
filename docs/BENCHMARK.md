@@ -88,6 +88,18 @@ The `hard` preset targets hard tasks and raises the limits further:
 It runs with `max_iterations=64`, `max_tokens=16384`, and
 `timeout_sec=3600`, so it is the most expensive preset and is manual only.
 
+## Current Evidence
+
+- `smoke` preset: 3/3 reward 1.0
+  (`fix-git`, `git-leak-recovery`, `openssl-selfsigned-cert`)
+- `coverage` preset: 3/3 reward 1.0
+  (`constraints-scheduling`, `kv-store-grpc`, `large-scale-text-editing`)
+- `hard` preset: 2/3 reward 1.0
+  (`configure-git-webserver`, `llm-inference-batching-scheduler` pass;
+  `train-fasttext` times out with `AgentTimeoutError` after the task's 3600s
+  agent budget, while the transcript shows the agent was actively training and
+  then waiting on background jobs with `sleep`)
+
 The `tb2` stage needs real LLM credentials:
 
 1. Add `TINYAGENT_API_KEY` as a repository secret.
