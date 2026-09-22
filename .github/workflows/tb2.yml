@@ -11,6 +11,13 @@ on:
         description: Harbor agent; use oracle for a no-API-key pipeline smoke
         required: false
         default: tinyagent_agent:TinyAgentAgent
+      preset:
+        description: Task preset; coverage uses longer medium tasks and higher limits
+        type: choice
+        options:
+          - smoke
+          - coverage
+        default: smoke
       include_task_name:
         description: Comma-separated Terminal-Bench 2 task names or globs
         required: false
@@ -38,7 +45,7 @@ permissions:
 jobs:
   tb2-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -78,7 +85,21 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           AGENT="${{ inputs.agent }}"
-          IFS=',' read -r -a TASKS <<< "${{ inputs.include_task_name }}"
+          PRESET="${{ inputs.preset }}"
+          if [ "$PRESET" = "coverage" ]; then
+            TASKS="*constraints-scheduling*,*kv-store-grpc*,*large-scale-text-editing*"
+            N_TASKS=3
+            MAX_ITERATIONS=32
+            MAX_TOKENS=4096
+            TIMEOUT_SEC=1800
+          else
+            TASKS="${{ inputs.include_task_name }}"
+            N_TASKS="${{ inputs.n_tasks }}"
+            MAX_ITERATIONS="${{ inputs.max_iterations }}"
+            MAX_TOKENS="${{ inputs.max_tokens }}"
+            TIMEOUT_SEC="${{ inputs.timeout_sec }}"
+          fi
+          IFS=',' read -r -a TASKS <<< "$TASKS"
           INCLUDE_ARGS=()
           for task in "${TASKS[@]}"; do
             INCLUDE_ARGS+=(--include-task-name "$task")
@@ -87,7 +108,7 @@ jobs:
             harbor run --dataset terminal-bench@2.0 \
               --agent oracle \
               "${INCLUDE_ARGS[@]}" \
-              --n-tasks "${{ inputs.n_tasks }}" \
+              --n-tasks "$N_TASKS" \
               --n-concurrent 1 \
               --yes
           else
@@ -95,12 +116,12 @@ jobs:
               --agent "$AGENT" \
               --model "${{ inputs.model }}" \
               "${INCLUDE_ARGS[@]}" \
-              --n-tasks "${{ inputs.n_tasks }}" \
+              --n-tasks "$N_TASKS" \
               --n-concurrent 1 \
               --agent-kwarg binary_path=/tmp/tb2agent \
-              --agent-kwarg max_iterations=${{ inputs.max_iterations }} \
-              --agent-kwarg timeout_sec=${{ inputs.timeout_sec }} \
-              --agent-kwarg max_tokens=${{ inputs.max_tokens }} \
+              --agent-kwarg max_iterations="$MAX_ITERATIONS" \
+              --agent-kwarg timeout_sec="$TIMEOUT_SEC" \
+              --agent-kwarg max_tokens="$MAX_TOKENS" \
               --yes
           fi
 

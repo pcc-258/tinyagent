@@ -69,6 +69,16 @@ tokens per call and limit the loop to 12 iterations. Use the manual `TB2`
 workflow inputs when you want more tasks or different difficulty; `max_tokens`
 and `max_iterations` control cost.
 
+The `coverage` preset targets longer medium tasks and raises the limits:
+
+- `constraints-scheduling`
+- `kv-store-grpc`
+- `large-scale-text-editing`
+
+It runs with `max_iterations=32`, `max_tokens=4096`, and
+`timeout_sec=1800`, so it costs more tokens and time. It is manual only and
+uploads the same `tb2-results` artifact for per-trial comparison.
+
 The `tb2` stage needs real LLM credentials:
 
 1. Add `TINYAGENT_API_KEY` as a repository secret.
