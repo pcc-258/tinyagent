@@ -13,6 +13,8 @@ import (
 
 	"github.com/pcc-258/tinyagent"
 	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/hook"
+	"github.com/pcc-258/tinyagent/model"
 	"github.com/pcc-258/tinyagent/model/openai"
 )
 
@@ -32,6 +34,7 @@ func main() {
 	maxIterFlag := flag.Int("max-iterations", 32, "maximum agent loop iterations")
 	timeoutSec := flag.Int("timeout-sec", 600, "total run timeout in seconds")
 	maxTokens := flag.Int("max-tokens", 2048, "max output tokens per model call; 0 means no limit")
+	traceModel := flag.Bool("trace-model", false, "log model responses for debugging")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -69,6 +72,7 @@ func main() {
 		Tools:         tools,
 		MaxIterations: *maxIterFlag,
 		Timeout:       time.Duration(*timeoutSec) * time.Second,
+		Hooks:         modelTraceHooks(*traceModel),
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tb2agent: create agent:", err)
@@ -100,6 +104,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "tb2agent: agent finished without a final answer")
 		os.Exit(1)
 	}
+}
+
+func modelTraceHooks(enabled bool) []hook.Hook {
+	if !enabled {
+		return nil
+	}
+	return []hook.Hook{hook.HookFuncs{
+		OnAfterModelCall: func(_ context.Context, resp *model.Response) error {
+			var names []string
+			for _, tc := range resp.Message.ToolCalls {
+				names = append(names, tc.Name)
+			}
+			tools := ""
+			if len(names) > 0 {
+				tools = strings.Join(names, ",")
+			}
+			fmt.Fprintf(os.Stderr, "[model] content=%q tools=%s finish=%s\n",
+				truncateLine(resp.Message.Content), tools, resp.FinishReason)
+			return nil
+		},
+	}}
 }
 
 func runAgent(

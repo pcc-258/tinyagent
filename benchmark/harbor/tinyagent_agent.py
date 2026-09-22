@@ -26,6 +26,7 @@ class TinyAgentAgent(BaseInstalledAgent):
         CliFlag("max_iterations", cli="--max-iterations", type="int"),
         CliFlag("timeout_sec", cli="--timeout-sec", type="int"),
         CliFlag("max_tokens", cli="--max-tokens", type="int"),
+        CliFlag("trace_model", cli="--trace-model", type="bool"),
     ]
     _REMOTE_BIN = "/usr/local/bin/tb2agent"
     _ENV_KEYS = (

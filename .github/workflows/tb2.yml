@@ -38,6 +38,10 @@ on:
         description: Max output tokens per model call
         required: false
         default: "2048"
+      trace_model:
+        description: Log model responses in the agent transcript
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -122,6 +126,7 @@ jobs:
               --agent-kwarg max_iterations="$MAX_ITERATIONS" \
               --agent-kwarg timeout_sec="$TIMEOUT_SEC" \
               --agent-kwarg max_tokens="$MAX_TOKENS" \
+              --agent-kwarg trace_model=${{ inputs.trace_model }} \
               --yes
           fi
 
