@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -28,7 +29,7 @@ func main() {
 	instruction := flag.String("instruction", "", "task instruction for the agent")
 	system := flag.String("system", defaultSystemPrompt, "system prompt")
 	workdir := flag.String("workdir", ".", "working directory for file and shell tools")
-	maxIterations := flag.Int("max-iterations", 32, "maximum agent loop iterations")
+	maxIterFlag := flag.Int("max-iterations", 32, "maximum agent loop iterations")
 	timeoutSec := flag.Int("timeout-sec", 600, "total run timeout in seconds")
 	maxTokens := flag.Int("max-tokens", 2048, "max output tokens per model call; 0 means no limit")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -66,7 +67,7 @@ func main() {
 		Model:         mdl,
 		System:        *system,
 		Tools:         tools,
-		MaxIterations: *maxIterations,
+		MaxIterations: *maxIterFlag,
 		Timeout:       time.Duration(*timeoutSec) * time.Second,
 	})
 	if err != nil {
@@ -74,16 +75,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	var final strings.Builder
-	for ev, runErr := range ag.Run(context.Background(), "tb2", *instruction) {
-		if runErr != nil {
-			fmt.Fprintln(os.Stderr, "tb2agent: run failed:", runErr)
-			os.Exit(1)
-		}
+	final, maxIterations, err := runAgent(context.Background(), ag, *instruction, func(ev core.Event) {
 		switch ev.Type {
 		case core.EventText:
 			fmt.Print(ev.Text)
-			final.WriteString(ev.Text)
 		case core.EventToolCall:
 			fmt.Fprintf(os.Stderr, "[tool] %s %s\n", ev.ToolCall.Name, ev.ToolCall.Arguments)
 		case core.EventToolResult:
@@ -93,11 +88,44 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "[tool-result] %s\n", truncateOutput(summary))
 		}
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tb2agent: run failed:", err)
+		os.Exit(1)
 	}
-	if strings.TrimSpace(final.String()) == "" {
+	if maxIterations {
+		fmt.Fprintln(os.Stderr, "tb2agent: max iterations reached")
+	}
+	if strings.TrimSpace(final) == "" && !maxIterations {
 		fmt.Fprintln(os.Stderr, "tb2agent: agent finished without a final answer")
 		os.Exit(1)
 	}
+}
+
+func runAgent(
+	ctx context.Context,
+	ag *tinyagent.Agent,
+	instruction string,
+	onEvent func(core.Event),
+) (string, bool, error) {
+	var final strings.Builder
+	maxIterations := false
+	for ev, runErr := range ag.Run(ctx, "tb2", instruction) {
+		if runErr != nil {
+			if errors.Is(runErr, core.ErrMaxIterations) {
+				maxIterations = true
+				continue
+			}
+			return final.String(), false, runErr
+		}
+		if onEvent != nil {
+			onEvent(ev)
+		}
+		if ev.Type == core.EventText {
+			final.WriteString(ev.Text)
+		}
+	}
+	return final.String(), maxIterations, nil
 }
 
 func envOr(primary, fallback string) string {
