@@ -1,14 +1,16 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/pcc-258/tinyagent/core"
-	"github.com/pcc-258/tinyagent/model"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
 )
 
 func TestGenerate(t *testing.T) {
@@ -113,6 +115,25 @@ func TestGenerate_DefaultMaxTokens(t *testing.T) {
 	c := New(Config{BaseURL: srv.URL, MaxTokens: 2048})
 	if _, err := c.Generate(context.Background(), model.Request{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestToWireMessages_AssistantToolCallIncludesContent(t *testing.T) {
+	msgs := []core.Message{{
+		Role: core.RoleAssistant,
+		ToolCalls: []core.ToolCall{{
+			ID:        "call_1",
+			Name:      "get_weather",
+			Arguments: []byte(`{}`),
+		}},
+	}}
+
+	raw, err := json.Marshal(toWireMessages(msgs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"content":""`)) {
+		t.Errorf("assistant tool-call message must include an empty content field, got %s", raw)
 	}
 }
 
