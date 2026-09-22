@@ -3,12 +3,12 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"github.com/pcc-258/tinyagent/core"
-	"github.com/pcc-258/tinyagent/model"
 )
 
 func TestGenerate(t *testing.T) {
@@ -94,6 +94,25 @@ func TestGenerate_HTTPError(t *testing.T) {
 	c := New(Config{BaseURL: srv.URL})
 	if _, err := c.Generate(context.Background(), model.Request{}); err == nil {
 		t.Fatal("expected error on HTTP 401")
+	}
+}
+
+func TestGenerate_DefaultMaxTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req wireRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.MaxTokens == nil || *req.MaxTokens != 2048 {
+			t.Errorf("max_tokens = %v, want 2048", req.MaxTokens)
+		}
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL, MaxTokens: 2048})
+	if _, err := c.Generate(context.Background(), model.Request{}); err != nil {
+		t.Fatal(err)
 	}
 }
 

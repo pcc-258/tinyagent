@@ -12,21 +12,25 @@ on:
         required: false
         default: tinyagent_agent:TinyAgentAgent
       include_task_name:
-        description: Terminal-Bench 2 task name or glob
+        description: Comma-separated Terminal-Bench 2 task names or globs
         required: false
-        default: "*fix-git*"
+        default: "*fix-git*,*git-leak-recovery*,*openssl-selfsigned-cert*"
       n_tasks:
         description: Maximum number of tasks to run
         required: false
-        default: "1"
+        default: "3"
       max_iterations:
         description: Maximum TinyAgent loop iterations
         required: false
-        default: "32"
+        default: "12"
       timeout_sec:
         description: Total agent run timeout in seconds
         required: false
-        default: "600"
+        default: "900"
+      max_tokens:
+        description: Max output tokens per model call
+        required: false
+        default: "2048"
 
 permissions:
   contents: read
@@ -74,10 +78,15 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           AGENT="${{ inputs.agent }}"
+          IFS=',' read -r -a TASKS <<< "${{ inputs.include_task_name }}"
+          INCLUDE_ARGS=()
+          for task in "${TASKS[@]}"; do
+            INCLUDE_ARGS+=(--include-task-name "$task")
+          done
           if [ "$AGENT" = "oracle" ]; then
             harbor run --dataset terminal-bench@2.0 \
               --agent oracle \
-              --include-task-name "${{ inputs.include_task_name }}" \
+              "${INCLUDE_ARGS[@]}" \
               --n-tasks "${{ inputs.n_tasks }}" \
               --n-concurrent 1 \
               --yes
@@ -85,11 +94,12 @@ jobs:
             harbor run --dataset terminal-bench@2.0 \
               --agent "$AGENT" \
               --model "${{ inputs.model }}" \
-              --include-task-name "${{ inputs.include_task_name }}" \
+              "${INCLUDE_ARGS[@]}" \
               --n-tasks "${{ inputs.n_tasks }}" \
               --n-concurrent 1 \
               --agent-kwarg binary_path=/tmp/tb2agent \
               --agent-kwarg max_iterations=${{ inputs.max_iterations }} \
               --agent-kwarg timeout_sec=${{ inputs.timeout_sec }} \
+              --agent-kwarg max_tokens=${{ inputs.max_tokens }} \
               --yes
           fi

@@ -79,9 +79,12 @@ jobs:
             --agent tinyagent_agent:TinyAgentAgent \
             --model "${OPENAI_MODEL:-deepseek-v4-flash}" \
             --include-task-name "*fix-git*" \
-            --n-tasks 1 \
+            --include-task-name "*git-leak-recovery*" \
+            --include-task-name "*openssl-selfsigned-cert*" \
+            --n-tasks 3 \
             --n-concurrent 1 \
             --agent-kwarg binary_path=/tmp/tb2agent \
-            --agent-kwarg max_iterations=32 \
-            --agent-kwarg timeout_sec=600 \
+            --agent-kwarg max_iterations=12 \
+            --agent-kwarg max_tokens=2048 \
+            --agent-kwarg timeout_sec=900 \
             --yes

@@ -5,14 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
+	"github.com/pcc-258/tinyagent/tool"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"github.com/pcc-258/tinyagent/core"
-	"github.com/pcc-258/tinyagent/model"
-	"github.com/pcc-258/tinyagent/tool"
 )
 
 const (
@@ -29,6 +29,8 @@ type Config struct {
 	BaseURL string
 	// Model 是默认模型名，可被 Request.Model 覆盖。
 	Model string
+	// MaxTokens 是每次模型调用的默认输出 token 上限；<=0 表示不限制。
+	MaxTokens int
 	// HTTPClient 为空时使用带超时的默认客户端。
 	HTTPClient *http.Client
 }
@@ -38,6 +40,7 @@ type Client struct {
 	apiKey  string
 	baseURL string
 	model   string
+	maxTok  int
 	http    *http.Client
 }
 
@@ -55,7 +58,7 @@ func New(cfg Config) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{apiKey: apiKey, baseURL: baseURL, model: cfg.Model, http: hc}
+	return &Client{apiKey: apiKey, baseURL: baseURL, model: cfg.Model, maxTok: cfg.MaxTokens, http: hc}
 }
 
 // --- wire 类型 ---
@@ -183,12 +186,16 @@ func (c *Client) buildRequest(req model.Request, stream bool) wireRequest {
 	if model == "" {
 		model = c.model
 	}
+	maxTokens := req.MaxTokens
+	if maxTokens == nil && c.maxTok > 0 {
+		maxTokens = &c.maxTok
+	}
 	return wireRequest{
 		Model:       model,
 		Messages:    toWireMessages(req.Messages),
 		Tools:       toWireTools(req.Tools),
 		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
+		MaxTokens:   maxTokens,
 		Stream:      stream,
 	}
 }

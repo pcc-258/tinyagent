@@ -30,6 +30,7 @@ func main() {
 	workdir := flag.String("workdir", ".", "working directory for file and shell tools")
 	maxIterations := flag.Int("max-iterations", 32, "maximum agent loop iterations")
 	timeoutSec := flag.Int("timeout-sec", 600, "total run timeout in seconds")
+	maxTokens := flag.Int("max-tokens", 2048, "max output tokens per model call; 0 means no limit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -49,9 +50,10 @@ func main() {
 		os.Exit(2)
 	}
 	mdl := openai.New(openai.Config{
-		APIKey:  apiKey,
-		BaseURL: envOr("TINYAGENT_BASE_URL", "OPENAI_BASE_URL"),
-		Model:   envOr("TINYAGENT_MODEL", "OPENAI_MODEL"),
+		APIKey:    apiKey,
+		BaseURL:   envOr("TINYAGENT_BASE_URL", "OPENAI_BASE_URL"),
+		Model:     envOr("TINYAGENT_MODEL", "OPENAI_MODEL"),
+		MaxTokens: *maxTokens,
 	})
 
 	tools, err := newCodingTools(*workdir)

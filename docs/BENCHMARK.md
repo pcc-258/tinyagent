@@ -54,8 +54,20 @@ Every pull request runs three chained stages in order:
 
 1. `unit-tests` - `go build`, `go vet`, and race-enabled unit tests.
 2. `e2e-tests` - race-enabled E2E tests against a local OpenAI-compatible server.
-3. `tb2` - one Terminal-Bench 2 `fix-git` smoke task with the real
+3. `tb2` - three low-cost Terminal-Bench 2 tasks with the real
    `tinyagent_agent:TinyAgentAgent` model loop.
+
+The default PR smoke runs three low-cost tasks with an easy or medium
+difficulty and short expert time estimates:
+
+- `fix-git` (easy)
+- `git-leak-recovery` (medium)
+- `openssl-selfsigned-cert` (medium)
+
+To keep token spend bounded, the PR stage caps model output at 2048 tokens per
+call and limits the loop to 12 iterations. Use the manual `TB2` workflow when
+you want more tasks or different difficulty; its `max_tokens` and
+`max_iterations` inputs control cost.
 
 The `tb2` stage needs real LLM credentials:
 
