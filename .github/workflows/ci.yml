@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  unit-tests:
+    name: unit-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,5 +22,66 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
-      - name: Test
-        run: go test -race ./...
+      - name: Unit tests
+        run: go test -race $(go list ./... | grep -v /e2e)
+
+  e2e-tests:
+    name: e2e-tests
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: E2E tests
+        run: go test -race ./e2e/...
+
+  tb2:
+    name: tb2
+    needs: e2e-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Build tb2agent
+        run: go build -trimpath -ldflags "-s -w" -o /tmp/tb2agent ./cmd/tb2agent
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Harbor
+        run: uv tool install harbor
+      - name: Require model API key
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Set the TINYAGENT_API_KEY repository secret for the PR TB2 stage."
+            exit 1
+          fi
+        env:
+          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
+      - name: Run Terminal-Bench 2 smoke
+        env:
+          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.TINYAGENT_BASE_URL }}
+          OPENAI_MODEL: ${{ secrets.TINYAGENT_MODEL }}
+          PYTHONPATH: ${{ github.workspace }}/benchmark/harbor
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.deepseek.com/v1}"
+          harbor run --dataset terminal-bench@2.0 \
+            --agent tinyagent_agent:TinyAgentAgent \
+            --model "${OPENAI_MODEL:-deepseek-v4-flash}" \
+            --include-task-name "*fix-git*" \
+            --n-tasks 1 \
+            --n-concurrent 1 \
+            --agent-kwarg binary_path=/tmp/tb2agent \
+            --agent-kwarg max_iterations=32 \
+            --agent-kwarg timeout_sec=600 \
+            --yes

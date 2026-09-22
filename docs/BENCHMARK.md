@@ -50,15 +50,20 @@ to keep the pipeline cheap.
 
 ## GitHub Actions
 
-The `TB2` workflow is manually triggered:
+Every pull request runs three chained stages in order:
+
+1. `unit-tests` - `go build`, `go vet`, and race-enabled unit tests.
+2. `e2e-tests` - race-enabled E2E tests against a local OpenAI-compatible server.
+3. `tb2` - one Terminal-Bench 2 `fix-git` smoke task with the real
+   `tinyagent_agent:TinyAgentAgent` model loop.
+
+The `tb2` stage needs real LLM credentials:
 
 1. Add `TINYAGENT_API_KEY` as a repository secret.
 2. Optionally add `TINYAGENT_BASE_URL` and `TINYAGENT_MODEL` secrets.
-3. Open Actions -> `TB2` -> Run workflow, choose model/task/limit, and start it.
 
-The workflow builds `cmd/tb2agent` for Linux, installs Harbor, and runs
-`harbor run` against `terminal-bench@2.0`. The job fails if the API key secret
-is missing. To verify the Harbor/TB2 pipeline itself without spending API
-calls, set the `agent` input to `oracle`: the oracle solves tasks from the
-checked-in solutions and needs no API key. The normal `go test` CI remains
-independent of benchmark cost.
+Until the key is configured, the `tb2` PR stage fails with a clear error, while
+the unit and E2E stages stay green. For manual large benchmark runs, use
+`.github/workflows/tb2.yml` with `workflow_dispatch`. It accepts task globs,
+`n_tasks`, and an `oracle` agent mode that uses checked-in reference solutions
+and needs no API key.
