@@ -17,6 +17,7 @@ on:
         options:
           - smoke
           - coverage
+          - hard
         default: smoke
       include_task_name:
         description: Comma-separated Terminal-Bench 2 task names or globs
@@ -49,7 +50,7 @@ permissions:
 jobs:
   tb2-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
@@ -96,6 +97,12 @@ jobs:
             MAX_ITERATIONS=32
             MAX_TOKENS=8192
             TIMEOUT_SEC=1800
+          elif [ "$PRESET" = "hard" ]; then
+            TASKS="*configure-git-webserver*,*llm-inference-batching-scheduler*,*train-fasttext*"
+            N_TASKS=3
+            MAX_ITERATIONS=64
+            MAX_TOKENS=16384
+            TIMEOUT_SEC=3600
           else
             TASKS="${{ inputs.include_task_name }}"
             N_TASKS="${{ inputs.n_tasks }}"

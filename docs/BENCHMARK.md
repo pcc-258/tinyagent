@@ -79,6 +79,15 @@ It runs with `max_iterations=32`, `max_tokens=8192`, and
 `timeout_sec=1800`, so it costs more tokens and time. It is manual only and
 uploads the same `tb2-results` artifact for per-trial comparison.
 
+The `hard` preset targets hard tasks and raises the limits further:
+
+- `configure-git-webserver`
+- `llm-inference-batching-scheduler`
+- `train-fasttext`
+
+It runs with `max_iterations=64`, `max_tokens=16384`, and
+`timeout_sec=3600`, so it is the most expensive preset and is manual only.
+
 The `tb2` stage needs real LLM credentials:
 
 1. Add `TINYAGENT_API_KEY` as a repository secret.

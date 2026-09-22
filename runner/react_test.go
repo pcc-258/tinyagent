@@ -13,6 +13,7 @@ import (
 	"iter"
 	"strings"
 	"testing"
+	"time"
 )
 
 type scriptedModel struct {
@@ -355,5 +356,66 @@ func TestReActRunner_ModelError(t *testing.T) {
 	_, err := collect(r.Run(context.Background(), s, "hi"))
 	if err == nil {
 		t.Fatal("expected model error to surface")
+	}
+}
+
+func TestReActRunner_ConsumerStopsEarly(t *testing.T) {
+	tl := mustNewTool(t, "echo", "echo", func(_ context.Context, p weatherParams) (core.ToolResult, error) {
+		return core.ToolResult{Content: "echo:" + p.City}, nil
+	})
+	model := &scriptedModel{responses: []model.Response{
+		{Message: core.Message{Role: core.RoleAssistant, ToolCalls: []core.ToolCall{
+			{ID: "c1", Name: "echo", Arguments: []byte(`{"city":"北京","days":1}`)},
+		}}},
+		{Message: core.Message{Role: core.RoleAssistant, Content: "done"}},
+	}}
+	r := mustRunner(t, RunnerOptions{Model: model, Tools: []tool.Tool{tl}})
+	s := store.NewSession("s1")
+
+	done := make(chan struct{})
+	go func() {
+		for ev, runErr := range r.Run(context.Background(), s, "go") {
+			if runErr != nil {
+				break
+			}
+			if ev.Type == core.EventToolCall {
+				break
+			}
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not stop when consumer stopped early")
+	}
+}
+
+func TestReActRunner_UsageAccumulates(t *testing.T) {
+	tl := mustNewTool(t, "echo", "echo", func(_ context.Context, p weatherParams) (core.ToolResult, error) {
+		return core.ToolResult{Content: "echo:" + p.City}, nil
+	})
+	model := &scriptedModel{responses: []model.Response{
+		{Message: core.Message{Role: core.RoleAssistant, ToolCalls: []core.ToolCall{
+			{ID: "c1", Name: "echo", Arguments: []byte(`{"city":"北京","days":1}`)},
+		}}, Usage: core.Usage{TotalTokens: 5}},
+		{Message: core.Message{Role: core.RoleAssistant, Content: "b"}, Usage: core.Usage{TotalTokens: 7}},
+	}}
+	r := mustRunner(t, RunnerOptions{Model: model, Tools: []tool.Tool{tl}})
+	s := store.NewSession("s1")
+
+	events, err := collect(r.Run(context.Background(), s, "go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int
+	for _, ev := range events {
+		if ev.Type == core.EventRunEnd && ev.Usage != nil {
+			total = ev.Usage.TotalTokens
+		}
+	}
+	if total != 12 {
+		t.Errorf("usage total = %d, want 12", total)
 	}
 }
