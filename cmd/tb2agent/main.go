@@ -25,7 +25,12 @@ Your job is to complete the task by inspecting and modifying files and running c
 Use the provided tools instead of assuming anything about the repository.
 Work inside the current working directory, which is usually /app.
 Do not ask the user questions and do not stop early: run tests or the verifier when available,
-fix failures, and only report a concise final summary when the task is complete.`
+fix failures, and only report a concise final summary when the task is complete.
+For benchmark tasks, once any candidate output satisfies every stated requirement
+(thresholds, file paths, formats, sizes), write it to the required output path immediately
+and stop. Do not start additional long experiments or long waits after a passing candidate
+exists. Prefer bounded foreground commands with timeouts over background jobs followed by
+long sleeps; poll briefly when you must wait.`
 
 func main() {
 	instruction := flag.String("instruction", "", "task instruction for the agent")
