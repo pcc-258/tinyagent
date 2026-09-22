@@ -84,7 +84,7 @@ class TinyAgentAgent(BaseInstalledAgent):
         parts.append(f"--instruction {shlex.quote(instruction)}")
         await self.exec_as_agent(
             environment,
-            command=" ".join(parts),
+            command=" ".join(parts) + " 2>&1 | tee /logs/agent/tb2agent.log",
             env=env,
             cwd="/app",
             timeout_sec=self._resolved_flags.get("timeout_sec"),
