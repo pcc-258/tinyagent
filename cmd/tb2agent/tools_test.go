@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunShell(t *testing.T) {
@@ -65,5 +66,24 @@ func TestGrepAndFind(t *testing.T) {
 	}
 	if !strings.Contains(found.Content, "main.go") || strings.Contains(found.Content, "README.md") {
 		t.Errorf("find result = %q, want only main.go", found.Content)
+	}
+}
+
+// TestRunShellBackgroundProcessDoesNotBlock ensures a command that starts a
+// background process returns immediately instead of waiting for the inherited
+// output pipe to close.
+func TestRunShellBackgroundProcessDoesNotBlock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := runShell(ctx, t.TempDir(), shellArgs{Command: "sleep 5 & echo started"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.Content, "command timed out") {
+		t.Fatalf("background command blocked runShell: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "started") {
+		t.Errorf("content = %q, want captured stdout", res.Content)
 	}
 }

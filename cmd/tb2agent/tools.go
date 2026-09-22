@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -134,33 +133,50 @@ func runShell(ctx context.Context, baseDir string, args shellArgs) (core.ToolRes
 
 	cmd := exec.CommandContext(runCtx, "/bin/sh", "-lc", args.Command)
 	cmd.Dir = dir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutFile, err := os.CreateTemp("", "tb2agent-stdout-*")
+	if err != nil {
+		return core.ToolResult{Error: fmt.Sprintf("create stdout file: %v", err)}, nil
+	}
+	defer os.Remove(stdoutFile.Name())
+	defer stdoutFile.Close()
 
-	err := cmd.Run()
+	stderrFile, err := os.CreateTemp("", "tb2agent-stderr-*")
+	if err != nil {
+		return core.ToolResult{Error: fmt.Sprintf("create stderr file: %v", err)}, nil
+	}
+	defer os.Remove(stderrFile.Name())
+	defer stderrFile.Close()
+
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stderrFile
+
+	err = cmd.Run()
 	exitCode := 0
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else if runCtx.Err() != nil {
+			stdout, _ := os.ReadFile(stdoutFile.Name())
+			stderr, _ := os.ReadFile(stderrFile.Name())
 			return core.ToolResult{Content: fmt.Sprintf(
 				"command timed out after %s\n--- stdout ---\n%s\n--- stderr ---\n%s",
 				time.Duration(args.TimeoutSec)*time.Second,
-				truncateOutput(stdout.String()),
-				truncateOutput(stderr.String()),
+				truncateOutput(string(stdout)),
+				truncateOutput(string(stderr)),
 			)}, nil
 		} else {
 			return core.ToolResult{Error: fmt.Sprintf("failed to start command: %v", err)}, nil
 		}
 	}
 
+	stdout, _ := os.ReadFile(stdoutFile.Name())
+	stderr, _ := os.ReadFile(stderrFile.Name())
 	content := fmt.Sprintf(
 		"exit_code=%d\n--- stdout ---\n%s\n--- stderr ---\n%s",
 		exitCode,
-		truncateOutput(stdout.String()),
-		truncateOutput(stderr.String()),
+		truncateOutput(string(stdout)),
+		truncateOutput(string(stderr)),
 	)
 	return core.ToolResult{Content: content}, nil
 }
