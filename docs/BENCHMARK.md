@@ -76,3 +76,5 @@ The `tb2` stage needs real LLM credentials:
 
 The manual workflow accepts task globs, `n_tasks`, and an `oracle` agent mode
 that uses checked-in reference solutions and needs no API key.
+Every manual run also uploads `jobs/**/result.json` as a `tb2-result` artifact
+so per-trial rewards and exceptions can be inspected after the run.
