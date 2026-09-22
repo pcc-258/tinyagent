@@ -87,3 +87,50 @@ func TestRunShellBackgroundProcessDoesNotBlock(t *testing.T) {
 		t.Errorf("content = %q, want captured stdout", res.Content)
 	}
 }
+
+func TestRunShellTimeoutReturnsPartialOutput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := runShell(ctx, t.TempDir(), shellArgs{
+		Command:    "echo before; sleep 2; echo after",
+		TimeoutSec: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Content, "command timed out") {
+		t.Fatalf("content = %q, want timeout message", res.Content)
+	}
+	if !strings.Contains(res.Content, "before") {
+		t.Errorf("content = %q, want partial stdout", res.Content)
+	}
+}
+
+func TestRunShellTruncatesOversizedOutput(t *testing.T) {
+	res, err := runShell(context.Background(), t.TempDir(), shellArgs{
+		Command: "python3 -c \"import sys; sys.stdout.write('x'*200000)\"",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Content, "truncated") {
+		t.Errorf("content length = %d, want truncation marker", len(res.Content))
+	}
+	if len(res.Content) > maxToolOutput+1000 {
+		t.Errorf("content length = %d, want bounded output", len(res.Content))
+	}
+}
+
+func TestWriteFileBadPathIsSoftError(t *testing.T) {
+	res, err := writeFile(writeFileArgs{
+		Path:    "/nonexistent-tinyagent-dir/a.txt",
+		Content: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Error == "" {
+		t.Fatal("expected soft error for unwritable path")
+	}
+}

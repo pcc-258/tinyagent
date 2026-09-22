@@ -153,10 +153,7 @@ func runShell(ctx context.Context, baseDir string, args shellArgs) (core.ToolRes
 	err = cmd.Run()
 	exitCode := 0
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else if runCtx.Err() != nil {
+		if runCtx.Err() != nil {
 			stdout, _ := os.ReadFile(stdoutFile.Name())
 			stderr, _ := os.ReadFile(stderrFile.Name())
 			return core.ToolResult{Content: fmt.Sprintf(
@@ -165,6 +162,10 @@ func runShell(ctx context.Context, baseDir string, args shellArgs) (core.ToolRes
 				truncateOutput(string(stdout)),
 				truncateOutput(string(stderr)),
 			)}, nil
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
 		} else {
 			return core.ToolResult{Error: fmt.Sprintf("failed to start command: %v", err)}, nil
 		}
