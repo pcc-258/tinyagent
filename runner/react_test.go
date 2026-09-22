@@ -2,9 +2,7 @@ package runner
 
 import (
 	"context"
-	"iter"
-	"strings"
-	"testing"
+	"errors"
 	"github.com/pcc-258/tinyagent/audit"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/ctxmgr"
@@ -12,12 +10,27 @@ import (
 	"github.com/pcc-258/tinyagent/model"
 	"github.com/pcc-258/tinyagent/store"
 	"github.com/pcc-258/tinyagent/tool"
+	"iter"
+	"strings"
+	"testing"
 )
 
 type scriptedModel struct {
 	responses []model.Response
 	err       error
 	calls     int
+}
+
+type lengthStreamModel struct{}
+
+func (lengthStreamModel) Generate(context.Context, model.Request) (model.Response, error) {
+	return model.Response{}, errors.New("unused")
+}
+
+func (lengthStreamModel) Stream(context.Context, model.Request) iter.Seq2[model.Chunk, error] {
+	return func(yield func(model.Chunk, error) bool) {
+		yield(model.Chunk{FinishReason: "length"}, nil)
+	}
 }
 
 func (m *scriptedModel) Generate(ctx context.Context, req model.Request) (model.Response, error) {
@@ -105,6 +118,16 @@ func TestReActRunner_PlainResponse(t *testing.T) {
 	}
 	if s.Len() != 2 {
 		t.Errorf("session len = %d, want 2 (user + assistant)", s.Len())
+	}
+}
+
+func TestReActRunner_EmptyLengthStreamFails(t *testing.T) {
+	r := mustRunner(t, RunnerOptions{Model: lengthStreamModel{}})
+	s := store.NewSession("s1")
+
+	_, err := collect(r.Run(context.Background(), s, "hi"))
+	if err == nil || !strings.Contains(err.Error(), "output truncated") {
+		t.Fatalf("err = %v, want output truncated error", err)
 	}
 }
 

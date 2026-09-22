@@ -94,7 +94,7 @@ jobs:
             TASKS="*constraints-scheduling*,*kv-store-grpc*,*large-scale-text-editing*"
             N_TASKS=3
             MAX_ITERATIONS=32
-            MAX_TOKENS=4096
+            MAX_TOKENS=8192
             TIMEOUT_SEC=1800
           else
             TASKS="${{ inputs.include_task_name }}"

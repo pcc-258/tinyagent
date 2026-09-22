@@ -75,7 +75,7 @@ The `coverage` preset targets longer medium tasks and raises the limits:
 - `kv-store-grpc`
 - `large-scale-text-editing`
 
-It runs with `max_iterations=32`, `max_tokens=4096`, and
+It runs with `max_iterations=32`, `max_tokens=8192`, and
 `timeout_sec=1800`, so it costs more tokens and time. It is manual only and
 uploads the same `tb2-results` artifact for per-trial comparison.
 

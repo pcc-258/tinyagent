@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
-	"log/slog"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 	"github.com/pcc-258/tinyagent/audit"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/hook"
 	"github.com/pcc-258/tinyagent/model"
 	"github.com/pcc-258/tinyagent/store"
 	"github.com/pcc-258/tinyagent/tool"
+	"iter"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 var (
@@ -277,6 +277,10 @@ func (r *ReActRunner) streamModel(
 		}
 		r.reportPanic(yield, err)
 		return nil, core.NewError(core.ErrKindModel, "model", "Stream", err)
+	}
+	if finish == "length" && acc.Empty() && strings.TrimSpace(sb.String()) == "" {
+		return nil, core.NewError(core.ErrKindModel, "model", "Stream",
+			errors.New("model output truncated with finish_reason=length"))
 	}
 
 	return &model.Response{
