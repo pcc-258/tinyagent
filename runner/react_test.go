@@ -34,6 +34,15 @@ func (lengthStreamModel) Stream(context.Context, model.Request) iter.Seq2[model.
 	}
 }
 
+type capturingRequestModel struct {
+	req *model.Request
+}
+
+func (m *capturingRequestModel) Generate(_ context.Context, req model.Request) (model.Response, error) {
+	m.req = &req
+	return model.Response{Message: core.Message{Role: core.RoleAssistant, Content: "ok"}}, nil
+}
+
 func (m *scriptedModel) Generate(ctx context.Context, req model.Request) (model.Response, error) {
 	if m.err != nil {
 		return model.Response{}, m.err
@@ -129,6 +138,23 @@ func TestReActRunner_EmptyLengthStreamFails(t *testing.T) {
 	_, err := collect(r.Run(context.Background(), s, "hi"))
 	if err == nil || !strings.Contains(err.Error(), "output truncated") {
 		t.Fatalf("err = %v, want output truncated error", err)
+	}
+}
+
+func TestReActRunner_SystemPromptIncludesBudget(t *testing.T) {
+	mdl := &capturingRequestModel{}
+	r := mustRunner(t, RunnerOptions{Model: mdl, MaxIterations: 5})
+	s := store.NewSession("s1")
+
+	if _, err := collect(r.Run(context.Background(), s, "go")); err != nil {
+		t.Fatal(err)
+	}
+	if mdl.req == nil {
+		t.Fatal("model was not called")
+	}
+	if !strings.Contains(mdl.req.System, "[run budget]") ||
+		!strings.Contains(mdl.req.System, "iteration=1/5") {
+		t.Errorf("system = %q, want run budget telemetry", mdl.req.System)
 	}
 }
 

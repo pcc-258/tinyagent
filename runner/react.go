@@ -12,6 +12,7 @@ import (
 	"github.com/pcc-258/tinyagent/tool"
 	"iter"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,7 +129,7 @@ func (r *ReActRunner) run(ctx context.Context, s *store.Session, input string, y
 			return
 		}
 
-		resp, ok := r.modelTurn(ctx, s, runID, &total, yield)
+		resp, ok := r.modelTurn(ctx, s, runID, &total, startedAt, i, yield)
 		if !ok || resp == nil {
 			return
 		}
@@ -154,6 +155,8 @@ func (r *ReActRunner) modelTurn(
 	s *store.Session,
 	runID string,
 	total *core.Usage,
+	runStartedAt time.Time,
+	iteration int,
 	yield func(core.Event, error) bool,
 ) (*model.Response, bool) {
 	msgs := s.Messages()
@@ -176,7 +179,11 @@ func (r *ReActRunner) modelTurn(
 		}
 	}
 
-	req := &model.Request{Messages: msgs, System: r.opts.System, Tools: tools}
+	req := &model.Request{
+		Messages: msgs,
+		System:   buildSystemPrompt(r.opts.System, ctx, runStartedAt, iteration, r.maxIter, total),
+		Tools:    tools,
+	}
 
 	if err := r.hooks.BeforeModelCall(ctx, req); err != nil {
 		return nil, r.fail(yield, err)
@@ -442,4 +449,40 @@ func panicInfoOf(err error) (*core.PanicInfo, bool) {
 		return nil, false
 	}
 	return &core.PanicInfo{Component: e.Component, Value: e.Err, Stack: e.Stack}, true
+}
+
+const budgetGuidance = "Prefer delivering a candidate that satisfies the stated requirements over further refinement; stop as soon as the requirements are met."
+
+func buildSystemPrompt(
+	base string,
+	ctx context.Context,
+	startedAt time.Time,
+	iteration, maxIter int,
+	total *core.Usage,
+) string {
+	var b strings.Builder
+	b.WriteString(base)
+	if b.Len() == 0 {
+		b.WriteString("You are a helpful agent.")
+	}
+	if !strings.HasSuffix(b.String(), "\n") {
+		b.WriteString("\n\n")
+	}
+	b.WriteString("[run budget] iteration=")
+	b.WriteString(strconv.Itoa(iteration + 1))
+	b.WriteString("/")
+	b.WriteString(strconv.Itoa(maxIter))
+	b.WriteString(" elapsed_seconds=")
+	b.WriteString(strconv.FormatFloat(time.Since(startedAt).Seconds(), 'f', 0, 64))
+	if deadline, ok := ctx.Deadline(); ok {
+		b.WriteString(" remaining_seconds=")
+		b.WriteString(strconv.FormatFloat(time.Until(deadline).Seconds(), 'f', 0, 64))
+	}
+	if total != nil && total.TotalTokens > 0 {
+		b.WriteString(" tokens_used=")
+		b.WriteString(strconv.Itoa(total.TotalTokens))
+	}
+	b.WriteString("\n")
+	b.WriteString(budgetGuidance)
+	return b.String()
 }

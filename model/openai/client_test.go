@@ -118,6 +118,34 @@ func TestGenerate_DefaultMaxTokens(t *testing.T) {
 	}
 }
 
+func TestGenerate_SystemPromptSent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req wireRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(req.Messages) < 2 {
+			t.Fatalf("messages = %d, want system + user", len(req.Messages))
+		}
+		if req.Messages[0].Role != "system" || req.Messages[0].Content != "be strict" {
+			t.Errorf("first message = %+v, want system prompt", req.Messages[0])
+		}
+		if req.Messages[1].Role != "user" || req.Messages[1].Content != "hi" {
+			t.Errorf("second message = %+v, want user input", req.Messages[1])
+		}
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL})
+	if _, err := c.Generate(context.Background(), model.Request{
+		System:   "be strict",
+		Messages: []core.Message{{Role: core.RoleUser, Content: "hi"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestToWireMessages_AssistantToolCallIncludesContent(t *testing.T) {
 	msgs := []core.Message{{
 		Role: core.RoleAssistant,

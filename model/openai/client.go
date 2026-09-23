@@ -190,9 +190,13 @@ func (c *Client) buildRequest(req model.Request, stream bool) wireRequest {
 	if maxTokens == nil && c.maxTok > 0 {
 		maxTokens = &c.maxTok
 	}
+	wireMsgs := toWireMessages(req.Messages)
+	if req.System != "" && (len(wireMsgs) == 0 || wireMsgs[0].Role != "system") {
+		wireMsgs = append([]wireMessage{{Role: "system", Content: req.System}}, wireMsgs...)
+	}
 	return wireRequest{
 		Model:       model,
-		Messages:    toWireMessages(req.Messages),
+		Messages:    wireMsgs,
 		Tools:       toWireTools(req.Tools),
 		Temperature: req.Temperature,
 		MaxTokens:   maxTokens,
