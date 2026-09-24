@@ -277,6 +277,30 @@ func TestReActRunner_MaxIterations(t *testing.T) {
 	}
 }
 
+func TestReActRunner_ForcedFinalizationSkipsTools(t *testing.T) {
+	tl := mustNewTool(t, "echo", "echo", func(_ context.Context, p weatherParams) (core.ToolResult, error) {
+		return core.ToolResult{Content: "echo:" + p.City}, nil
+	})
+	model := &scriptedModel{responses: []model.Response{
+		{Message: core.Message{Role: core.RoleAssistant, ToolCalls: []core.ToolCall{
+			{ID: "c1", Name: "echo", Arguments: []byte(`{"city":"北京","days":1}`)},
+		}}},
+		{Message: core.Message{Role: core.RoleAssistant, ToolCalls: []core.ToolCall{
+			{ID: "c2", Name: "echo", Arguments: []byte(`{"city":"上海","days":1}`)},
+		}}},
+	}}
+	r := mustRunner(t, RunnerOptions{Model: model, Tools: []tool.Tool{tl}, MaxIterations: 2})
+	s := store.NewSession("s1")
+
+	events, err := collect(r.Run(context.Background(), s, "go"))
+	if !errors.Is(err, core.ErrMaxIterations) {
+		t.Fatalf("err = %v, want core.ErrMaxIterations", err)
+	}
+	if got := countType(events, core.EventToolResult); got != 1 {
+		t.Errorf("tool results = %d, want 1 (finalization must skip tools)", got)
+	}
+}
+
 func TestReActRunner_SessionBusy(t *testing.T) {
 	model := &scriptedModel{responses: []model.Response{{Message: core.Message{Role: core.RoleAssistant, Content: "x"}}}}
 	r := mustRunner(t, RunnerOptions{Model: model})

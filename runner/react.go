@@ -129,13 +129,18 @@ func (r *ReActRunner) run(ctx context.Context, s *store.Session, input string, y
 			return
 		}
 
-		resp, ok := r.modelTurn(ctx, s, runID, &total, startedAt, i, yield)
+		finalizing := budgetFinalizing(ctx, startedAt, i, r.maxIter)
+		resp, ok := r.modelTurn(ctx, s, runID, &total, startedAt, i, finalizing, yield)
 		if !ok || resp == nil {
 			return
 		}
 
 		if len(resp.Message.ToolCalls) == 0 {
 			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Time: time.Now()}, nil)
+			return
+		}
+		if finalizing {
+			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Err: core.ErrMaxIterations, Time: time.Now()}, core.ErrMaxIterations)
 			return
 		}
 
@@ -157,10 +162,14 @@ func (r *ReActRunner) modelTurn(
 	total *core.Usage,
 	runStartedAt time.Time,
 	iteration int,
+	finalizing bool,
 	yield func(core.Event, error) bool,
 ) (*model.Response, bool) {
 	msgs := s.Messages()
 	tools := r.tools.Infos()
+	if finalizing {
+		tools = nil
+	}
 
 	if r.opts.Context != nil && r.opts.ContextBudget > 0 {
 		processed, actions, err := r.opts.Context.Prepare(ctx, msgs, tools, r.opts.System, r.opts.ContextBudget)
@@ -181,7 +190,7 @@ func (r *ReActRunner) modelTurn(
 
 	req := &model.Request{
 		Messages: msgs,
-		System:   buildSystemPrompt(r.opts.System, ctx, runStartedAt, iteration, r.maxIter, total),
+		System:   buildSystemPrompt(r.opts.System, ctx, runStartedAt, iteration, r.maxIter, total, finalizing),
 		Tools:    tools,
 	}
 
@@ -459,6 +468,7 @@ func buildSystemPrompt(
 	startedAt time.Time,
 	iteration, maxIter int,
 	total *core.Usage,
+	finalizing bool,
 ) string {
 	var b strings.Builder
 	b.WriteString(base)
@@ -484,5 +494,25 @@ func buildSystemPrompt(
 	}
 	b.WriteString("\n")
 	b.WriteString(budgetGuidance)
+	if finalizing {
+		b.WriteString("\nTool calls are disabled because the run budget is nearly exhausted. Provide your final answer now without calling tools.")
+	}
 	return b.String()
+}
+
+func budgetFinalizing(ctx context.Context, startedAt time.Time, iteration, maxIter int) bool {
+	if iteration >= maxIter-1 {
+		return true
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return false
+	}
+	elapsed := time.Since(startedAt)
+	remaining := time.Until(deadline)
+	total := elapsed + remaining
+	if total <= 0 {
+		return false
+	}
+	return remaining <= total/10
 }
