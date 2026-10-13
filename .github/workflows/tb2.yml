@@ -103,7 +103,7 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: go build -trimpath -ldflags '-s -w' -o /tmp/tb2agent ./cmd/tb2agent
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
       - name: Install pinned Harbor and verify adapter
         run: |
           uv venv --python 3.12 .venv
