@@ -4,36 +4,135 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  unit-tests:
-    name: unit-tests
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
-          cache: true
+          go-version: '1.26.x'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Go formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Validate workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" -color
+      - name: Test benchmark configuration and result gates
+        run: python -m unittest discover -s scripts -p '*_test.py' -v
+
+  unit-tests:
+    name: unit-tests
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
       - name: Build
         run: go build ./...
       - name: Vet
         run: go vet ./...
       - name: Unit tests
-        run: go test -race $(go list ./... | grep -v /e2e)
+        shell: bash
+        run: |
+          go list ./... > packages.txt
+          mapfile -t packages < <(sed '/\/e2e$/d' packages.txt)
+          go test -race -timeout 5m -json -coverprofile=unit-coverage.out "${packages[@]}" | tee unit-tests.json
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-diagnostics
+          path: |
+            unit-tests.json
+            unit-coverage.out
+          if-no-files-found: warn
+          retention-days: 14
 
   e2e-tests:
     name: e2e-tests
     needs: unit-tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
-          cache: true
+          go-version: '1.26.x'
+          cache: false
       - name: E2E tests
-        run: go test -race ./e2e/...
+        run: go test -race -timeout 5m -json -coverprofile=e2e-coverage.out ./e2e/... | tee e2e-tests.json
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-diagnostics
+          path: |
+            e2e-tests.json
+            e2e-coverage.out
+          if-no-files-found: warn
+          retention-days: 14
+
+  go-compatibility:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Build and test on Go 1.27
+        run: |
+          go build ./...
+          go test -race -timeout 5m -json ./... | tee compatibility-tests.json
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-test-diagnostics
+          path: compatibility-tests.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  tb2:
+    needs: [lint, unit-tests, e2e-tests, go-compatibility]
+    uses: ./.github/workflows/tb2.yml
+    with:
+      automatic: true
+    secrets:
+      TINYAGENT_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
+      TINYAGENT_BASE_URL: ${{ secrets.TINYAGENT_BASE_URL }}
+      TINYAGENT_MODEL: ${{ secrets.TINYAGENT_MODEL }}

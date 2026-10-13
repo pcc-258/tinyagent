@@ -8,6 +8,15 @@ in layers so each failure mode has a deterministic, no-LLM-cost test.
 
 ## Test Layers
 
+Runtime lifecycle regressions additionally cover actual sequential execution
+order, bounded parallelism, interrupted tool pairing, Hook panic policies and
+audit visibility, cancellation safe points/escalation, committed stop conditions,
+writeback exclusivity/errors/timeouts, independent session loads, safe cache
+unloading, message ownership, bounded offload range reads, cross-session reference
+rejection, summaries and audit ring ordering. `e2e/lifecycle_test.go` exercises
+HTTP/SSE offload → scoped readback → final answer, including usage-only tail
+chunks and Store commit before RunEnd. See [Runtime semantics](RUNTIME.md).
+
 ### 1. Protocol / Model Adapter
 
 These tests drive the OpenAI-compatible client against an `httptest` server:
@@ -62,13 +71,16 @@ These tests use scripted models and real tools:
 
 ### 6. Real LLM Benchmark (TB2)
 
-TB2 is manual and cost-gated:
+TB2 has a bounded automatic gate plus manual broader evaluation:
 
-- `smoke` preset: three easy/medium short tasks
+- automatic after CI passes: one real-model `fix-git` trial for same-repository
+  PRs/main; fork PRs use clearly labeled oracle without credentials
+- manual `smoke` preset: three easy/medium short tasks
 - `coverage` preset: three longer medium tasks with higher token/iteration/time
   limits
 - `oracle` agent mode verifies the Harbor pipeline without an LLM key
-- every run uploads `tb2-results`, including per-trial result.json, exception
+- verifier rewards, completion counts and exceptions are checked explicitly
+- every run uploads `tb2-results-<run-id>-<attempt>`, including per-trial result.json, exception
   details, trial logs, and the full agent transcript
 
 ## Failure Taxonomy
@@ -90,4 +102,5 @@ When a benchmark trial fails, classify it before changing code:
    an LLM (fake server, scripted model, or direct tool call).
 2. Add an E2E test through `Agent.Run` when the failure can cross layers.
 3. Add a TB2 task to a manual preset only when real-model behavior matters.
-4. Keep automatic CI to the no-cost layers so PRs never burn tokens.
+4. Keep automatic TB2 small and bounded; expand coverage/hard evaluation manually.
+5. Add helper tests whenever input handling or the result gate changes.

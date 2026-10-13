@@ -36,3 +36,9 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+/.venv/
+/jobs/
+/tb2-jobs/
+/tb2-config.json
+/tb2-summary.md
+/*-tests.json

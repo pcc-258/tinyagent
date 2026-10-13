@@ -1,146 +1,134 @@
 name: TB2
 
 on:
+  workflow_call:
+    inputs:
+      automatic:
+        type: boolean
+        default: true
+    secrets:
+      TINYAGENT_API_KEY:
+        required: false
+      TINYAGENT_BASE_URL:
+        required: false
+      TINYAGENT_MODEL:
+        required: false
   workflow_dispatch:
     inputs:
       model:
         description: Model name passed to tb2agent
-        required: false
         default: deepseek-v4-flash
       agent:
-        description: Harbor agent; use oracle for a no-API-key pipeline smoke
-        required: false
+        description: Agent (oracle checks infrastructure without model tokens)
+        type: choice
+        options: [tinyagent_agent:TinyAgentAgent, oracle]
         default: tinyagent_agent:TinyAgentAgent
       preset:
-        description: Task preset; coverage uses longer medium tasks and higher limits
+        description: Task preset
         type: choice
-        options:
-          - smoke
-          - coverage
-          - hard
+        options: [smoke, coverage, hard]
         default: smoke
       include_task_name:
-        description: Comma-separated Terminal-Bench 2 task names or globs
-        required: false
-        default: "*fix-git*,*git-leak-recovery*,*openssl-selfsigned-cert*"
+        description: Comma-separated task names or globs (smoke only)
+        default: '*fix-git*,*git-leak-recovery*,*openssl-selfsigned-cert*'
       n_tasks:
-        description: Maximum number of tasks to run
-        required: false
-        default: "3"
+        description: Maximum tasks (smoke only, 1-20)
+        default: '3'
       max_iterations:
-        description: Maximum TinyAgent loop iterations
-        required: false
-        default: "12"
+        description: Maximum agent iterations (smoke only, 1-256)
+        default: '12'
       timeout_sec:
-        description: Total agent run timeout in seconds
-        required: false
-        default: "900"
+        description: Agent timeout per task (smoke only, 60-7200 seconds)
+        default: '900'
       max_tokens:
-        description: Max output tokens per model call
-        required: false
-        default: "2048"
+        description: Output tokens per call (smoke only, 1-32768)
+        default: '2048'
       trace_model:
-        description: Log model responses in the agent transcript
-        required: false
-        default: "false"
+        description: Include model responses in diagnostic logs
+        type: boolean
+        default: false
+      minimum_reward:
+        description: Minimum mean verifier reward (0-1; errors always fail)
+        default: '1.0'
 
 permissions:
   contents: read
 
+concurrency:
+  group: tb2-${{ inputs.automatic && 'auto' || 'manual' }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ inputs.automatic || false }}
+
 jobs:
   tb2-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: ${{ inputs.automatic && 45 || 250 }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
-          cache: true
-
-      - name: Build tb2agent
-        run: go build -trimpath -ldflags "-s -w" -o /tmp/tb2agent ./cmd/tb2agent
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate and record benchmark configuration
+        id: config
         env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: amd64
-
-      - uses: astral-sh/setup-uv@v6
-
-      - name: Install Harbor
-        run: uv tool install harbor
-
+          TB2_AUTOMATIC: ${{ inputs.automatic || false }}
+          TB2_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          TB2_AGENT: ${{ inputs.agent }}
+          TB2_PRESET: ${{ inputs.preset }}
+          TB2_TASKS: ${{ inputs.include_task_name }}
+          TB2_N_TASKS: ${{ inputs.n_tasks }}
+          TB2_MAX_ITERATIONS: ${{ inputs.max_iterations }}
+          TB2_TIMEOUT_SEC: ${{ inputs.timeout_sec }}
+          TB2_MAX_TOKENS: ${{ inputs.max_tokens }}
+          TB2_TRACE_MODEL: ${{ inputs.trace_model || false }}
+          TB2_MINIMUM_REWARD: ${{ inputs.minimum_reward }}
+        run: python scripts/tb2_config.py --output tb2-config.json
       - name: Require model API key
-        if: inputs.agent != 'oracle'
+        if: steps.config.outputs.agent != 'oracle'
+        env:
+          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
-            echo "::error::Set the TINYAGENT_API_KEY repository secret to run TB2."
+            echo '::error::Configure TINYAGENT_API_KEY for real-agent TB2 smoke; oracle does not validate TinyAgent.'
             exit 1
           fi
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Build tb2agent
         env:
-          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
-
-      - name: Run Terminal-Bench 2 smoke
-        env:
-          OPENAI_API_KEY: ${{ secrets.TINYAGENT_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.TINYAGENT_BASE_URL }}
-          OPENAI_MODEL: ${{ inputs.model }}
-          PYTHONPATH: ${{ github.workspace }}/benchmark/harbor
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -trimpath -ldflags '-s -w' -o /tmp/tb2agent ./cmd/tb2agent
+      - uses: astral-sh/setup-uv@v6
+      - name: Install pinned Harbor and verify adapter
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          AGENT="${{ inputs.agent }}"
-          PRESET="${{ inputs.preset }}"
-          if [ "$PRESET" = "coverage" ]; then
-            TASKS="*constraints-scheduling*,*kv-store-grpc*,*large-scale-text-editing*"
-            N_TASKS=3
-            MAX_ITERATIONS=32
-            MAX_TOKENS=8192
-            TIMEOUT_SEC=1800
-          elif [ "$PRESET" = "hard" ]; then
-            TASKS="*configure-git-webserver*,*llm-inference-batching-scheduler*,*train-fasttext*"
-            N_TASKS=3
-            MAX_ITERATIONS=64
-            MAX_TOKENS=16384
-            TIMEOUT_SEC=3600
-          else
-            TASKS="${{ inputs.include_task_name }}"
-            N_TASKS="${{ inputs.n_tasks }}"
-            MAX_ITERATIONS="${{ inputs.max_iterations }}"
-            MAX_TOKENS="${{ inputs.max_tokens }}"
-            TIMEOUT_SEC="${{ inputs.timeout_sec }}"
-          fi
-          IFS=',' read -r -a TASKS <<< "$TASKS"
-          INCLUDE_ARGS=()
-          for task in "${TASKS[@]}"; do
-            INCLUDE_ARGS+=(--include-task-name "$task")
-          done
-          if [ "$AGENT" = "oracle" ]; then
-            harbor run --dataset terminal-bench@2.0 \
-              --agent oracle \
-              "${INCLUDE_ARGS[@]}" \
-              --n-tasks "$N_TASKS" \
-              --n-concurrent 1 \
-              --yes
-          else
-            harbor run --dataset terminal-bench@2.0 \
-              --agent "$AGENT" \
-              --model "${{ inputs.model }}" \
-              "${INCLUDE_ARGS[@]}" \
-              --n-tasks "$N_TASKS" \
-              --n-concurrent 1 \
-              --agent-kwarg binary_path=/tmp/tb2agent \
-              --agent-kwarg max_iterations="$MAX_ITERATIONS" \
-              --agent-kwarg timeout_sec="$TIMEOUT_SEC" \
-              --agent-kwarg max_tokens="$MAX_TOKENS" \
-              --agent-kwarg trace_model=${{ inputs.trace_model }} \
-              --yes
-          fi
-
-      - name: Upload TB2 results
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -r benchmark/harbor/requirements.txt
+          .venv/bin/harbor --version
+          PYTHONPATH=benchmark/harbor .venv/bin/python -c 'from tinyagent_agent import TinyAgentAgent; print(TinyAgentAgent.name())'
+      - name: Run Terminal-Bench 2
+        timeout-minutes: ${{ fromJSON(steps.config.outputs.run_timeout_minutes) }}
+        env:
+          OPENAI_API_KEY: ${{ steps.config.outputs.agent != 'oracle' && secrets.TINYAGENT_API_KEY || '' }}
+          OPENAI_BASE_URL: ${{ steps.config.outputs.agent != 'oracle' && secrets.TINYAGENT_BASE_URL || '' }}
+          OPENAI_MODEL: ${{ inputs.model || vars.TINYAGENT_MODEL || secrets.TINYAGENT_MODEL || 'deepseek-v4-flash' }}
+          PYTHONPATH: ${{ github.workspace }}/benchmark/harbor
+        run: .venv/bin/python scripts/tb2_run.py --config tb2-config.json --harbor .venv/bin/harbor
+      - name: Check verifier results and publish summary
+        if: always() && steps.config.outcome == 'success'
+        run: python scripts/tb2_results.py --config tb2-config.json --results tb2-jobs --summary tb2-summary.md
+      - name: Upload TB2 diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tb2-results
-          path: jobs/**
+          name: tb2-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tb2-jobs/**
+            tb2-config.json
+            tb2-summary.md
           if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,2 @@
+# Version whose adapter API is checked by the workflow import smoke.
+harbor==0.18.0
