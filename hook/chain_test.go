@@ -2,9 +2,9 @@ package hook
 
 import (
 	"context"
-	"testing"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/model"
+	"testing"
 )
 
 func TestHookChain_Order(t *testing.T) {

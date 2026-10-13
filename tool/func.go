@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"github.com/pcc-258/tinyagent/core"
+	"reflect"
 )
 
 // FuncTool 用 Go 函数实现 Tool。

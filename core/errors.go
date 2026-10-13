@@ -106,4 +106,6 @@ var (
 	ErrHookRejected = errors.New("tinyagent: rejected by hook")
 	// ErrNotFound 表示请求的对象不存在。
 	ErrNotFound = errors.New("tinyagent: not found")
+	// ErrContextBudget means even the retained context cannot fit the budget.
+	ErrContextBudget = errors.New("tinyagent: context budget exceeded")
 )

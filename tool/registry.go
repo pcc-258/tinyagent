@@ -2,9 +2,9 @@ package tool
 
 import (
 	"fmt"
+	"github.com/pcc-258/tinyagent/core"
 	"sort"
 	"sync"
-	"github.com/pcc-258/tinyagent/core"
 )
 
 // ToolRegistry 持有已注册的工具，并发安全。

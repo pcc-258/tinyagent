@@ -3,8 +3,9 @@ package ctxmgr
 import (
 	"context"
 	"fmt"
-	"sync"
 	"github.com/pcc-258/tinyagent/core"
+	"sync"
+	"time"
 )
 
 // TruncateStrategy 丢弃较早的历史，只保留最近的若干条消息。
@@ -13,6 +14,9 @@ import (
 type TruncateStrategy struct {
 	// KeepRecent 是最少保留的最近消息条数，零值时取 20。
 	KeepRecent int
+	// Counter enables additional pair-preserving trimming to fit the message budget.
+	// KeepRecent is then a preferred retention size, not a hard minimum.
+	Counter Counter
 }
 
 // Name 实现 ContextStrategy。
@@ -27,12 +31,30 @@ func (s *TruncateStrategy) Apply(ctx context.Context, msgs []core.Message, budge
 	if keep <= 0 {
 		keep = 20
 	}
-	if len(msgs) <= keep {
-		return msgs, nil, nil
+	start := 0
+	if len(msgs) > keep {
+		start = safeCutPoint(msgs, len(msgs)-keep)
 	}
-
-	start := safeCutPoint(msgs, len(msgs)-keep)
-	if start <= 0 {
+	if s.Counter != nil {
+		for start < len(msgs)-1 {
+			count, err := s.Counter.Count(ctx, CountRequest{Messages: msgs[start:]})
+			if err != nil {
+				return nil, nil, err
+			}
+			if count.Total <= budget {
+				break
+			}
+			next := start + 1
+			for next < len(msgs) && msgs[next].Role == core.RoleTool {
+				next++
+			}
+			if next >= len(msgs) {
+				break
+			}
+			start = next
+		}
+	}
+	if start == 0 {
 		return msgs, nil, nil
 	}
 
@@ -102,7 +124,12 @@ func (s *OffloadStrategy) Apply(ctx context.Context, msgs []core.Message, budget
 		if err != nil {
 			return nil, nil, fmt.Errorf("offload tool result: %w", err)
 		}
-		out[i].Content = fmt.Sprintf("[offloaded:%s] %d bytes moved out of context", ref, len(msgs[i].Content))
+		out[i].Content = fmt.Sprintf("[offloaded:%s] %d bytes moved out of context; use read_offloaded with this ref to retrieve ranges", ref, len(msgs[i].Content))
+		out[i].Meta = core.CloneMeta(out[i].Meta)
+		if out[i].Meta == nil {
+			out[i].Meta = make(map[string]any)
+		}
+		out[i].Meta[offloadRefKey] = ref
 		offloaded++
 	}
 
@@ -117,14 +144,40 @@ func (s *OffloadStrategy) Apply(ctx context.Context, msgs []core.Message, budget
 
 // MemoryOffloader 是 Offloader 的内存实现，进程退出即丢失。
 type MemoryOffloader struct {
-	mu    sync.Mutex
-	items map[string]string
-	seq   int
+	mu      sync.Mutex
+	items   map[string]offloadedItem
+	seq     int
+	bytes   int
+	options MemoryOffloaderOptions
+}
+
+type offloadedItem struct {
+	content string
+	expires time.Time
+}
+
+// MemoryOffloaderOptions bounds storage. A full store returns an error instead
+// of silently evicting live references. TTL <=0 disables expiry. Zero limits
+// default to 1024 items and 64 MiB; negative limits disable the corresponding cap.
+type MemoryOffloaderOptions struct {
+	MaxItems int
+	MaxBytes int
+	TTL      time.Duration
 }
 
 // NewMemoryOffloader 创建一个内存卸载器。
 func NewMemoryOffloader() *MemoryOffloader {
-	return &MemoryOffloader{items: make(map[string]string)}
+	return NewMemoryOffloaderWithOptions(MemoryOffloaderOptions{})
+}
+
+func NewMemoryOffloaderWithOptions(opts MemoryOffloaderOptions) *MemoryOffloader {
+	if opts.MaxItems == 0 {
+		opts.MaxItems = 1024
+	}
+	if opts.MaxBytes == 0 {
+		opts.MaxBytes = 64 * 1024 * 1024
+	}
+	return &MemoryOffloader{items: make(map[string]offloadedItem), options: opts}
 }
 
 // Offload 实现 Offloader。
@@ -134,9 +187,18 @@ func (o *MemoryOffloader) Offload(ctx context.Context, content string) (string, 
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.expireLocked()
+	if (o.options.MaxItems > 0 && len(o.items) >= o.options.MaxItems) || (o.options.MaxBytes > 0 && len(content) > o.options.MaxBytes-o.bytes) {
+		return "", fmt.Errorf("offloader capacity exceeded; delete unused references or use a persistent offloader")
+	}
 	o.seq++
 	ref := fmt.Sprintf("mem-%d", o.seq)
-	o.items[ref] = content
+	item := offloadedItem{content: content}
+	if o.options.TTL > 0 {
+		item.expires = time.Now().Add(o.options.TTL)
+	}
+	o.items[ref] = item
+	o.bytes += len(content)
 	return ref, nil
 }
 
@@ -147,9 +209,39 @@ func (o *MemoryOffloader) Retrieve(ctx context.Context, ref string) (string, err
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.expireLocked()
 	v, ok := o.items[ref]
 	if !ok {
 		return "", core.ErrNotFound
 	}
-	return v, nil
+	return v.content, nil
+}
+
+// Delete releases an unused reference. Callers must ensure no live history needs it.
+func (o *MemoryOffloader) Delete(ctx context.Context, ref string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	v, ok := o.items[ref]
+	if !ok {
+		return core.ErrNotFound
+	}
+	delete(o.items, ref)
+	o.bytes -= len(v.content)
+	return nil
+}
+
+func (o *MemoryOffloader) expireLocked() {
+	if o.options.TTL <= 0 {
+		return
+	}
+	now := time.Now()
+	for ref, item := range o.items {
+		if !item.expires.IsZero() && !now.Before(item.expires) {
+			delete(o.items, ref)
+			o.bytes -= len(item.content)
+		}
+	}
 }

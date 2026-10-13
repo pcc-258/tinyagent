@@ -6,10 +6,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"iter"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/model"
 	"github.com/pcc-258/tinyagent/store"
+	"iter"
 
 	"github.com/pcc-258/tinyagent"
 )

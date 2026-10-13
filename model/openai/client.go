@@ -33,15 +33,18 @@ type Config struct {
 	MaxTokens int
 	// HTTPClient 为空时使用带超时的默认客户端。
 	HTTPClient *http.Client
+	// DisableStreamUsage omits stream_options for endpoints that do not support it.
+	DisableStreamUsage bool
 }
 
 // Client 实现 model.Model 与 model.StreamingModel。
 type Client struct {
-	apiKey  string
-	baseURL string
-	model   string
-	maxTok  int
-	http    *http.Client
+	apiKey             string
+	baseURL            string
+	model              string
+	maxTok             int
+	http               *http.Client
+	disableStreamUsage bool
 }
 
 // New 创建一个 OpenAI 兼容客户端。
@@ -58,18 +61,23 @@ func New(cfg Config) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{apiKey: apiKey, baseURL: baseURL, model: cfg.Model, maxTok: cfg.MaxTokens, http: hc}
+	return &Client{apiKey: apiKey, baseURL: baseURL, model: cfg.Model, maxTok: cfg.MaxTokens, http: hc, disableStreamUsage: cfg.DisableStreamUsage}
 }
 
 // --- wire 类型 ---
 
 type wireRequest struct {
-	Model       string        `json:"model"`
-	Messages    []wireMessage `json:"messages"`
-	Tools       []wireTool    `json:"tools,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model         string             `json:"model"`
+	Messages      []wireMessage      `json:"messages"`
+	Tools         []wireTool         `json:"tools,omitempty"`
+	Temperature   *float64           `json:"temperature,omitempty"`
+	MaxTokens     *int               `json:"max_tokens,omitempty"`
+	Stream        bool               `json:"stream,omitempty"`
+	StreamOptions *wireStreamOptions `json:"stream_options,omitempty"`
+}
+
+type wireStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type wireMessage struct {
@@ -194,7 +202,7 @@ func (c *Client) buildRequest(req model.Request, stream bool) wireRequest {
 	if req.System != "" && (len(wireMsgs) == 0 || wireMsgs[0].Role != "system") {
 		wireMsgs = append([]wireMessage{{Role: "system", Content: req.System}}, wireMsgs...)
 	}
-	return wireRequest{
+	wr := wireRequest{
 		Model:       model,
 		Messages:    wireMsgs,
 		Tools:       toWireTools(req.Tools),
@@ -202,6 +210,10 @@ func (c *Client) buildRequest(req model.Request, stream bool) wireRequest {
 		MaxTokens:   maxTokens,
 		Stream:      stream,
 	}
+	if stream && !c.disableStreamUsage {
+		wr.StreamOptions = &wireStreamOptions{IncludeUsage: true}
+	}
+	return wr
 }
 
 func (c *Client) newRequest(ctx context.Context, body io.Reader) (*http.Request, error) {

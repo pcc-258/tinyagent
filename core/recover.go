@@ -103,6 +103,26 @@ func AsError(err error) (*Error, bool) {
 
 // IsPanic 报告 err 是否源于一次被捕获的 panic。
 func IsPanic(err error) bool {
-	e, ok := AsError(err)
-	return ok && e.Kind == ErrKindPanic
+	_, ok := AsPanic(err)
+	return ok
+}
+
+// AsPanic finds the original panic error through component wrappers and joined
+// run/persistence errors, rather than stopping at an outer ErrorKind.
+func AsPanic(err error) (*Error, bool) {
+	for err != nil {
+		if e, ok := err.(*Error); ok && e.Kind == ErrKindPanic {
+			return e, true
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				if e, ok := AsPanic(child); ok {
+					return e, true
+				}
+			}
+			return nil, false
+		}
+		err = errors.Unwrap(err)
+	}
+	return nil, false
 }

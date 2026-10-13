@@ -351,10 +351,11 @@ func TestReActRunner_HookRejectsTool(t *testing.T) {
 func TestReActRunner_ContextAction(t *testing.T) {
 	model := &scriptedModel{responses: []model.Response{{Message: core.Message{Role: core.RoleAssistant, Content: "ok"}}}}
 	r := mustRunner(t, RunnerOptions{
-		Model:         model,
-		Counter:       ctxmgr.NewSimpleCounter(),
-		Context:       ctxmgr.NewDefaultContextManager(ctxmgr.NewSimpleCounter()),
-		ContextBudget: 50,
+		Model:   model,
+		Counter: ctxmgr.NewSimpleCounter(),
+		Context: ctxmgr.NewDefaultContextManager(ctxmgr.NewSimpleCounter()),
+		// Budget includes the generated system prompt as well as messages.
+		ContextBudget: 150,
 	})
 	s := store.NewSession("s1")
 	for i := 0; i < 40; i++ {

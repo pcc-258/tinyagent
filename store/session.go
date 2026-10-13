@@ -1,9 +1,9 @@
 package store
 
 import (
+	"github.com/pcc-258/tinyagent/core"
 	"sync"
 	"time"
-	"github.com/pcc-258/tinyagent/core"
 )
 
 // Session 是内存态的会话。
@@ -59,7 +59,7 @@ func (s *Session) Messages() []core.Message {
 func (s *Session) Append(msgs ...core.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.messages = append(s.messages, msgs...)
+	s.messages = append(s.messages, core.CloneMessages(msgs)...)
 	s.UpdatedAt = time.Now()
 }
 
@@ -67,8 +67,7 @@ func (s *Session) Append(msgs ...core.Message) {
 func (s *Session) Replace(msgs []core.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.messages = make([]core.Message, len(msgs))
-	copy(s.messages, msgs)
+	s.messages = core.CloneMessages(msgs)
 	s.UpdatedAt = time.Now()
 }
 
@@ -76,8 +75,7 @@ func (s *Session) Replace(msgs []core.Message) {
 func (s *Session) Snapshot() SessionSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	msgs := make([]core.Message, len(s.messages))
-	copy(msgs, s.messages)
+	msgs := core.CloneMessages(s.messages)
 	return SessionSnapshot{ID: s.ID, Messages: msgs, Meta: core.CloneMeta(s.Meta)}
 }
 
@@ -85,8 +83,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 func (s *Session) LoadFrom(snap SessionSnapshot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.messages = make([]core.Message, len(snap.Messages))
-	copy(s.messages, snap.Messages)
+	s.messages = core.CloneMessages(snap.Messages)
 	if snap.Meta != nil {
 		s.Meta = core.CloneMeta(snap.Meta)
 	}

@@ -2,9 +2,9 @@ package model
 
 import (
 	"context"
-	"iter"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/tool"
+	"iter"
 )
 
 // Request 是一次模型调用请求。

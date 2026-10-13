@@ -2,9 +2,9 @@ package audit
 
 import (
 	"context"
+	"github.com/pcc-258/tinyagent/core"
 	"sync"
 	"time"
-	"github.com/pcc-258/tinyagent/core"
 )
 
 // MemoryAudit 是 Audit 的内存实现。
@@ -15,6 +15,7 @@ type MemoryAudit struct {
 	mu         sync.RWMutex
 	records    []AuditRecord
 	maxRecords int
+	start      int
 }
 
 // NewMemoryAudit 创建内存审计器。
@@ -22,6 +23,17 @@ func NewMemoryAudit() *MemoryAudit { return &MemoryAudit{} }
 
 // WithMaxRecords 设置保留上限，超出后丢弃最旧记录；n <= 0 表示不限。
 func (a *MemoryAudit) WithMaxRecords(n int) *MemoryAudit {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ordered := make([]AuditRecord, len(a.records))
+	for i := range ordered {
+		ordered[i] = a.records[(a.start+i)%len(a.records)]
+	}
+	if n > 0 && len(ordered) > n {
+		ordered = ordered[len(ordered)-n:]
+	}
+	a.records = append([]AuditRecord(nil), ordered...)
+	a.start = 0
 	a.maxRecords = n
 	return a
 }
@@ -38,12 +50,12 @@ func (a *MemoryAudit) Record(ctx context.Context, rec AuditRecord) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.records = append(a.records, rec)
-	if a.maxRecords > 0 && len(a.records) > a.maxRecords {
-		drop := len(a.records) - a.maxRecords
-		kept := make([]AuditRecord, len(a.records)-drop)
-		copy(kept, a.records[drop:])
-		a.records = kept
+	rec.Detail = core.CloneMeta(rec.Detail)
+	if a.maxRecords > 0 && len(a.records) == a.maxRecords {
+		a.records[a.start] = rec
+		a.start = (a.start + 1) % len(a.records)
+	} else {
+		a.records = append(a.records, rec)
 	}
 	return nil
 }
@@ -58,7 +70,8 @@ func (a *MemoryAudit) Query(ctx context.Context, q AuditQuery) ([]AuditRecord, e
 	defer a.mu.RUnlock()
 
 	out := make([]AuditRecord, 0, len(a.records))
-	for _, rec := range a.records {
+	for i := range a.records {
+		rec := a.records[(a.start+i)%len(a.records)]
 		if q.SessionID != "" && rec.SessionID != q.SessionID {
 			continue
 		}

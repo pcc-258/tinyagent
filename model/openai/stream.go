@@ -6,12 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/model"
 	"io"
 	"iter"
 	"net/http"
 	"strings"
-	"github.com/pcc-258/tinyagent/core"
-	"github.com/pcc-258/tinyagent/model"
 )
 
 type wireStreamChunk struct {
@@ -83,6 +83,15 @@ func (c *Client) Stream(ctx context.Context, req model.Request) iter.Seq2[model.
 				yield(model.Chunk{}, fmt.Errorf("openai: %s", sc.Error.Message))
 				return
 			}
+			if sc.Usage != nil {
+				if !yield(model.Chunk{Usage: &core.Usage{
+					PromptTokens:     sc.Usage.PromptTokens,
+					CompletionTokens: sc.Usage.CompletionTokens,
+					TotalTokens:      sc.Usage.TotalTokens,
+				}}, nil) {
+					return
+				}
+			}
 			if len(sc.Choices) == 0 {
 				continue
 			}
@@ -100,15 +109,6 @@ func (c *Client) Stream(ctx context.Context, req model.Request) iter.Seq2[model.
 					ID:             tc.ID,
 					Name:           tc.Function.Name,
 					ArgumentsDelta: tc.Function.Arguments,
-				}}, nil) {
-					return
-				}
-			}
-			if sc.Usage != nil {
-				if !yield(model.Chunk{Usage: &core.Usage{
-					PromptTokens:     sc.Usage.PromptTokens,
-					CompletionTokens: sc.Usage.CompletionTokens,
-					TotalTokens:      sc.Usage.TotalTokens,
 				}}, nil) {
 					return
 				}

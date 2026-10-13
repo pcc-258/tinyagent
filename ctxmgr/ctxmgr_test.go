@@ -2,10 +2,10 @@ package ctxmgr
 
 import (
 	"context"
-	"strings"
-	"testing"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/tool"
+	"strings"
+	"testing"
 )
 
 func TestSimpleCounter_Basic(t *testing.T) {

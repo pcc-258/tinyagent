@@ -2,6 +2,7 @@ package ctxmgr
 
 import (
 	"context"
+	"fmt"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/tool"
 )
@@ -19,11 +20,16 @@ type DefaultContextManager struct {
 
 // NewDefaultContextManager 用推荐默认策略构造上下文管理器。
 func NewDefaultContextManager(counter Counter) *DefaultContextManager {
+	return NewDefaultContextManagerWithOffloader(counter, NewMemoryOffloader())
+}
+
+// NewDefaultContextManagerWithOffloader shares storage with a read_offloaded tool.
+func NewDefaultContextManagerWithOffloader(counter Counter, offloader Offloader) *DefaultContextManager {
 	return &DefaultContextManager{
 		Counter: counter,
 		Strategies: []ContextStrategy{
-			&OffloadStrategy{Offloader: NewMemoryOffloader()},
-			&TruncateStrategy{},
+			&OffloadStrategy{Offloader: offloader},
+			&TruncateStrategy{Counter: counter},
 		},
 	}
 }
@@ -44,6 +50,13 @@ func (m *DefaultContextManager) Prepare(
 
 	cur := msgs
 	var actions []core.ContextAction
+	fixed, err := m.Counter.Count(ctx, CountRequest{Tools: tools, System: system})
+	if err != nil {
+		return nil, nil, err
+	}
+	if fixed.Total > budget {
+		return nil, nil, fmt.Errorf("%w: system and tools use %d of %d tokens", core.ErrContextBudget, fixed.Total, budget)
+	}
 
 	for _, st := range m.Strategies {
 		count, err := m.Counter.Count(ctx, CountRequest{Messages: cur, Tools: tools, System: system})
@@ -54,19 +67,28 @@ func (m *DefaultContextManager) Prepare(
 			break
 		}
 
-		next, action, err := st.Apply(ctx, cur, budget)
+		next, action, err := st.Apply(ctx, cur, budget-fixed.Total)
 		if err != nil {
 			return nil, actions, err
 		}
 		if action != nil {
 			action.Before = count.Total
-			if after, err := m.Counter.Count(ctx, CountRequest{Messages: next, Tools: tools, System: system}); err == nil {
-				action.After = after.Total
+			after, err := m.Counter.Count(ctx, CountRequest{Messages: next, Tools: tools, System: system})
+			if err != nil {
+				return nil, actions, err
 			}
+			action.After = after.Total
 			actions = append(actions, *action)
 		}
 		cur = next
 	}
 
+	count, err := m.Counter.Count(ctx, CountRequest{Messages: cur, Tools: tools, System: system})
+	if err != nil {
+		return nil, actions, err
+	}
+	if count.Total > budget {
+		return nil, actions, fmt.Errorf("%w: estimated %d tokens, budget %d", core.ErrContextBudget, count.Total, budget)
+	}
 	return cur, actions, nil
 }

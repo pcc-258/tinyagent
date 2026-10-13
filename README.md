@@ -18,6 +18,8 @@ with no CLI, no sidecar, and no IPC.
 - **Fully replaceable** — every module is an interface. Swap the store, the context
   strategy, the hooks, or the entire agent loop.
 - **Streaming-first** — token-by-token events, with tool-call assembly handled for you.
+- **Runtime control** — bounded tool concurrency, composable stop conditions,
+  safe-point cancellation, and context offload with scoped range reads.
 
 ## Install
 
@@ -104,6 +106,11 @@ for ev, err := range ag.Run(ctx, "session-1", "What's the weather in Beijing?") 
 ```
 
 ## Examples
+
+See [Runtime control and state ownership](docs/RUNTIME.md) for stop conditions,
+cooperative cancellation, output reserves, summaries, offload storage, session
+unloading, and provider compatibility. Same-session runs stay exclusive through
+writeback; persistence failures are returned, and run-end events follow commit.
 
 | Example | Description | API key |
 |---|---|---|

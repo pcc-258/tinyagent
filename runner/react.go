@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/pcc-258/tinyagent/audit"
 	"github.com/pcc-258/tinyagent/core"
+	"github.com/pcc-258/tinyagent/ctxmgr"
 	"github.com/pcc-258/tinyagent/hook"
 	"github.com/pcc-258/tinyagent/model"
 	"github.com/pcc-258/tinyagent/store"
@@ -46,6 +47,10 @@ func NewReActRunner(opts RunnerOptions) (*ReActRunner, error) {
 	if opts.Model == nil {
 		return nil, core.NewError(core.ErrKindConfig, "runner", "new", errors.New("Model is required"))
 	}
+	if opts.OutputReserve < 0 {
+		return nil, core.NewError(core.ErrKindConfig, "runner", "new", errors.New("OutputReserve must be non-negative"))
+	}
+	opts.StopConditions = append([]StopCondition(nil), opts.StopConditions...)
 
 	logger := opts.Logger
 	if logger == nil {
@@ -87,6 +92,7 @@ func (r *ReActRunner) RegisterTool(t tool.Tool) error {
 // Run 实现 Runner。
 func (r *ReActRunner) Run(ctx context.Context, s *store.Session, input string) iter.Seq2[core.Event, error] {
 	return func(yield func(core.Event, error) bool) {
+		defer finishCancel(ctx)
 		r.run(ctx, s, input, yield)
 	}
 }
@@ -101,6 +107,8 @@ func (r *ReActRunner) run(ctx context.Context, s *store.Session, input string, y
 		return
 	}
 	defer s.Release()
+	defer repairHistory(s)
+	repairHistory(s)
 
 	if r.opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -123,7 +131,18 @@ func (r *ReActRunner) run(ctx context.Context, s *store.Session, input string, y
 	}
 
 	var total core.Usage
+	output := yield
+	yield = func(ev core.Event, err error) bool {
+		if ev.Type == core.EventRunEnd && ev.Usage == nil {
+			usage := total
+			ev.Usage = &usage
+		}
+		return output(ev, err)
+	}
 	for i := 0; i < r.maxIter; i++ {
+		// Between steps both safe modes can stop without starting more work.
+		cancelAt(ctx, CancelAfterModel)
+		cancelAt(ctx, CancelAfterTools)
 		if err := ctx.Err(); err != nil {
 			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Err: err, Time: time.Now()}, err)
 			return
@@ -134,18 +153,53 @@ func (r *ReActRunner) run(ctx context.Context, s *store.Session, input string, y
 		if !ok || resp == nil {
 			return
 		}
+		if cancelAt(ctx, CancelAfterModel) || ctx.Err() != nil {
+			if len(resp.Message.ToolCalls) > 0 {
+				appendMissingResults(s, resp.Message.ToolCalls, "not executed: run canceled before tool dispatch")
+			}
+			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Err: ctx.Err(), Time: time.Now()}, ctx.Err())
+			return
+		}
 
 		if len(resp.Message.ToolCalls) == 0 {
+			if cancelAt(ctx, CancelAfterTools) {
+				yield(core.Event{Type: core.EventRunEnd, Usage: &total, Err: ctx.Err(), Time: time.Now()}, ctx.Err())
+				return
+			}
 			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Time: time.Now()}, nil)
 			return
 		}
 		if finalizing {
+			appendMissingResults(s, resp.Message.ToolCalls, "not executed: tool calls disabled by run budget")
 			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Err: core.ErrMaxIterations, Time: time.Now()}, core.ErrMaxIterations)
 			return
 		}
 
 		if !r.toolTurn(ctx, s, runID, resp, yield) {
 			return
+		}
+		if cancelAt(ctx, CancelAfterTools) || ctx.Err() != nil {
+			yield(core.Event{Type: core.EventRunEnd, Usage: &total, Err: ctx.Err(), Time: time.Now()}, ctx.Err())
+			return
+		}
+		step := StepResult{Iteration: i + 1, Elapsed: time.Since(startedAt), Usage: total, Message: resp.Message}
+		for _, condition := range r.opts.StopConditions {
+			if condition == nil {
+				continue
+			}
+			stop, err := core.GuardValue(r.guard, "stop condition", func() (bool, error) {
+				return condition(StepResult{Iteration: step.Iteration, Elapsed: step.Elapsed, Usage: step.Usage, Message: core.CloneMessage(step.Message)}), nil
+			})
+			if err != nil {
+				if r.reportPanic(ctx, s, runID, yield, err) {
+					r.fail(yield, err)
+				}
+				return
+			}
+			if stop {
+				yield(core.Event{Type: core.EventRunEnd, Usage: &total, Time: time.Now()}, nil)
+				return
+			}
 		}
 	}
 
@@ -166,25 +220,46 @@ func (r *ReActRunner) modelTurn(
 	yield func(core.Event, error) bool,
 ) (*model.Response, bool) {
 	msgs := s.Messages()
-	tools := r.tools.Infos()
+	hooks := r.guardedHooks(ctx, s, runID, yield)
+	tools, infoErr := core.GuardValue(r.guard, "tool definitions", func() ([]tool.ToolInfo, error) { return r.tools.Infos(), nil })
+	if infoErr != nil {
+		if r.reportPanic(ctx, s, runID, yield, infoErr) {
+			r.fail(yield, infoErr)
+		}
+		return nil, false
+	}
 	if finalizing {
 		tools = nil
 	}
 
 	if r.opts.Context != nil && r.opts.ContextBudget > 0 {
-		processed, actions, err := r.opts.Context.Prepare(ctx, msgs, tools, r.opts.System, r.opts.ContextBudget)
+		inputBudget := r.opts.ContextBudget - r.opts.OutputReserve
+		if inputBudget <= 0 {
+			return nil, r.fail(yield, core.ErrContextBudget)
+		}
+		system := buildSystemPrompt(r.opts.System, ctx, runStartedAt, iteration, r.maxIter, total, finalizing)
+		type preparedContext struct {
+			messages []core.Message
+			actions  []core.ContextAction
+		}
+		prepared, err := core.GuardValue(r.guard, "context", func() (preparedContext, error) {
+			processed, actions, err := r.opts.Context.Prepare(ctx, msgs, tools, system, inputBudget)
+			return preparedContext{processed, actions}, err
+		})
+		processed, actions := prepared.messages, prepared.actions
 		if err != nil {
+			if !r.reportPanic(ctx, s, runID, yield, err) {
+				return nil, false
+			}
 			return nil, r.fail(yield, core.NewError(core.ErrKindContext, "context", "prepare", err))
 		}
+		s.Replace(processed)
+		msgs = processed
 		for i := range actions {
 			if !yield(core.Event{Type: core.EventContextAction, ContextAction: &actions[i], Time: time.Now()}, nil) {
 				return nil, false
 			}
 			r.recordAudit(ctx, s.ID, runID, audit.AuditContextAction, "context", actions[i].Detail, 0)
-		}
-		if len(actions) > 0 {
-			s.Replace(processed)
-			msgs = processed
 		}
 	}
 
@@ -193,23 +268,68 @@ func (r *ReActRunner) modelTurn(
 		System:   buildSystemPrompt(r.opts.System, ctx, runStartedAt, iteration, r.maxIter, total, finalizing),
 		Tools:    tools,
 	}
+	if r.opts.OutputReserve > 0 {
+		reserve := r.opts.OutputReserve
+		req.MaxTokens = &reserve
+	}
 
-	if err := r.hooks.BeforeModelCall(ctx, req); err != nil {
+	if err := hooks.BeforeModelCall(ctx, req); err != nil {
+		if errors.Is(err, errYieldStopped) {
+			return nil, false
+		}
+		return nil, r.fail(yield, err)
+	}
+	if r.opts.Counter != nil && r.opts.ContextBudget > 0 {
+		reserve := r.opts.OutputReserve
+		if req.MaxTokens != nil {
+			reserve = max(reserve, *req.MaxTokens)
+		}
+		count, err := core.GuardValue(r.guard, "counter", func() (ctxmgr.CountResult, error) {
+			return r.opts.Counter.Count(ctx, ctxmgr.CountRequest{Messages: req.Messages, Tools: req.Tools, System: req.System})
+		})
+		if err != nil {
+			if r.reportPanic(ctx, s, runID, yield, err) {
+				r.fail(yield, err)
+			}
+			return nil, false
+		}
+		if count.Total > r.opts.ContextBudget-reserve {
+			return nil, r.fail(yield, fmt.Errorf("%w: final request uses %d tokens", core.ErrContextBudget, count.Total))
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, r.fail(yield, err)
 	}
 
 	startedAt := time.Now()
 	resp, streamed, err := r.callModel(ctx, req, yield)
 	if err != nil {
+		if !r.reportPanic(ctx, s, runID, yield, err) {
+			return nil, false
+		}
 		return nil, r.fail(yield, err)
 	}
 	if resp == nil {
 		return nil, false
 	}
+	if resp.FinishReason == "length" {
+		total.Add(resp.Usage)
+		s.Append(resp.Message)
+		appendMissingResults(s, resp.Message.ToolCalls, "not executed: model output was truncated")
+		return nil, r.fail(yield, core.NewError(core.ErrKindModel, "model", "Generate", errors.New("model output truncated with finish_reason=length")))
+	}
 
-	if err := r.hooks.AfterModelCall(ctx, resp); err != nil {
+	total.Add(resp.Usage)
+	originalMessage := core.CloneMessage(resp.Message)
+	if err := hooks.AfterModelCall(ctx, resp); err != nil {
+		s.Append(originalMessage)
+		appendMissingResults(s, originalMessage.ToolCalls, "not executed: AfterModelCall interrupted before tool dispatch")
+		if errors.Is(err, errYieldStopped) {
+			return nil, false
+		}
 		return nil, r.fail(yield, err)
 	}
+	s.Append(resp.Message)
 
 	if !streamed && resp.Message.Content != "" {
 		if !yield(core.Event{Type: core.EventText, Text: resp.Message.Content, Time: time.Now()}, nil) {
@@ -217,8 +337,6 @@ func (r *ReActRunner) modelTurn(
 		}
 	}
 
-	total.Add(resp.Usage)
-	s.Append(resp.Message)
 	r.recordAudit(ctx, s.ID, runID, audit.AuditModelCall, "model", map[string]any{
 		"finish_reason":     resp.FinishReason,
 		"prompt_tokens":     resp.Usage.PromptTokens,
@@ -246,7 +364,6 @@ func (r *ReActRunner) callModel(
 		return r.opts.Model.Generate(ctx, *req)
 	})
 	if err != nil {
-		r.reportPanic(yield, err)
 		return nil, false, core.NewError(core.ErrKindModel, "model", "Generate", err)
 	}
 	return &resp, false, nil
@@ -264,37 +381,60 @@ func (r *ReActRunner) streamModel(
 	var usage core.Usage
 	var finish string
 
-	_, err := core.GuardValue(r.guard, "model", func() (struct{}, error) {
-		for chunk, cerr := range sm.Stream(ctx, *req) {
-			if cerr != nil {
-				return struct{}{}, cerr
-			}
-			if chunk.TextDelta != "" {
-				sb.WriteString(chunk.TextDelta)
-				if !yield(core.Event{Type: core.EventText, Text: chunk.TextDelta, Time: time.Now()}, nil) {
-					return struct{}{}, errYieldStopped
-				}
-			}
-			if chunk.ToolCall != nil {
-				acc.Add(chunk.ToolCall)
-			}
-			if chunk.Usage != nil {
-				usage = *chunk.Usage
-			}
-			if chunk.FinishReason != "" {
-				finish = chunk.FinishReason
-			}
-		}
-		return struct{}{}, nil
+	type pullStream struct {
+		next func() (model.Chunk, error, bool)
+		stop func()
+	}
+	pull, err := core.GuardValue(r.guard, "model", func() (pullStream, error) {
+		next, stop := iter.Pull2(sm.Stream(ctx, *req))
+		return pullStream{next, stop}, nil
 	})
 	if err != nil {
-		if errors.Is(err, errYieldStopped) {
-			return nil, nil
-		}
-		r.reportPanic(yield, err)
 		return nil, core.NewError(core.ErrKindModel, "model", "Stream", err)
 	}
-	if finish == "length" && acc.Empty() && strings.TrimSpace(sb.String()) == "" {
+	defer func() {
+		// Consumer callbacks are outside recovery. Only provider iteration and
+		// teardown are component callbacks covered by the model panic policy.
+		_, _ = core.GuardValue(r.guard, "model", func() (struct{}, error) { pull.stop(); return struct{}{}, nil })
+	}()
+	type streamItem struct {
+		chunk model.Chunk
+		err   error
+		ok    bool
+	}
+	for {
+		item, err := core.GuardValue(r.guard, "model", func() (streamItem, error) {
+			chunk, err, ok := pull.next()
+			return streamItem{chunk, err, ok}, nil
+		})
+		if err != nil {
+			return nil, core.NewError(core.ErrKindModel, "model", "Stream", err)
+		}
+		if !item.ok {
+			break
+		}
+		if item.err != nil {
+			return nil, core.NewError(core.ErrKindModel, "model", "Stream", item.err)
+		}
+		chunk := item.chunk
+		if chunk.TextDelta != "" {
+			sb.WriteString(chunk.TextDelta)
+			if !yield(core.Event{Type: core.EventText, Text: chunk.TextDelta, Time: time.Now()}, nil) {
+				return nil, nil
+			}
+		}
+		if chunk.ToolCall != nil {
+			acc.Add(chunk.ToolCall)
+		}
+		if chunk.Usage != nil {
+			usage = *chunk.Usage
+		}
+		if chunk.FinishReason != "" {
+			finish = chunk.FinishReason
+		}
+	}
+
+	if finish == "length" {
 		return nil, core.NewError(core.ErrKindModel, "model", "Stream",
 			errors.New("model output truncated with finish_reason=length"))
 	}
@@ -315,9 +455,33 @@ func (r *ReActRunner) fail(yield func(core.Event, error) bool, err error) bool {
 	return false
 }
 
-func (r *ReActRunner) reportPanic(yield func(core.Event, error) bool, err error) {
+func (r *ReActRunner) reportPanic(ctx context.Context, s *store.Session, runID string, yield func(core.Event, error) bool, err error) bool {
 	if pi, ok := panicInfoOf(err); ok {
-		yield(core.Event{Type: core.EventPanic, Panic: pi, Time: time.Now()}, nil)
+		r.recordAudit(ctx, s.ID, runID, audit.AuditPanic, pi.Component, map[string]any{"error": err.Error()}, 0)
+		return yield(core.Event{Type: core.EventPanic, Panic: pi, Time: time.Now()}, nil)
+	}
+	return true
+}
+
+func (r *ReActRunner) guardedHooks(ctx context.Context, s *store.Session, runID string, yield func(core.Event, error) bool) *hook.Chain {
+	return r.hooks.Guarded(r.guard, func(err error) error {
+		if !r.reportPanic(ctx, s, runID, yield, err) {
+			return errYieldStopped
+		}
+		return nil
+	}, r.opts.PanicPolicy == core.PanicFailRun)
+}
+
+func repairHistory(s *store.Session) {
+	msgs, n := core.RepairToolCalls(s.Messages(), "execution outcome unavailable after interruption; do not assume success or cancellation")
+	if n > 0 {
+		s.Replace(msgs)
+	}
+}
+
+func appendMissingResults(s *store.Session, calls []core.ToolCall, reason string) {
+	for _, c := range calls {
+		s.Append(core.MessageFromToolResult(core.ToolResult{ToolCallID: c.ID, Error: reason}))
 	}
 }
 
@@ -328,78 +492,141 @@ func (r *ReActRunner) toolTurn(
 	resp *model.Response,
 	yield func(core.Event, error) bool,
 ) bool {
-	calls := resp.Message.ToolCalls
+	calls := core.CloneMessage(resp.Message).ToolCalls
+	ctx = ctxmgr.WithOffloadReferences(ctx, s.Messages())
+	ctx, cancelTools := context.WithCancel(ctx)
+	defer cancelTools()
 	n := len(calls)
-
+	hooks := r.guardedHooks(ctx, s, runID, yield)
 	results := make([]core.ToolResult, n)
 	panics := make([]*core.PanicInfo, n)
 	runnable := make([]bool, n)
-	startedAt := make([]time.Time, n)
-
+	executed := make([]bool, n)
+	durations := make([]time.Duration, n)
+	committed := false
+	commit := func() {
+		if committed {
+			return
+		}
+		committed = true
+		msgs := make([]core.Message, n)
+		for i := range calls {
+			results[i].ToolCallID = calls[i].ID
+			msgs[i] = core.MessageFromToolResult(results[i])
+		}
+		s.Append(msgs...)
+	}
 	for i := range calls {
-		if !yield(core.Event{Type: core.EventToolCall, ToolCall: &calls[i], Time: time.Now()}, nil) {
+		results[i] = core.ToolResult{ToolCallID: calls[i].ID, Error: "not executed: run stopped before tool dispatch"}
+	}
+	// Even a consumer break at a ToolCall event must leave paired history.
+	defer commit()
+	for i := range calls {
+		eventCall := core.CloneMessage(core.Message{ToolCalls: []core.ToolCall{calls[i]}}).ToolCalls[0]
+		if !yield(core.Event{Type: core.EventToolCall, ToolCall: &eventCall, Time: time.Now()}, nil) {
 			return false
 		}
-		startedAt[i] = time.Now()
-
-		if err := r.hooks.BeforeToolCall(ctx, &calls[i]); err != nil {
-			results[i] = core.ToolResult{ToolCallID: calls[i].ID, Error: "rejected by hook: " + err.Error()}
-			r.recordAudit(ctx, s.ID, runID, audit.AuditHookReject, "hook", map[string]any{
-				"tool": calls[i].Name,
-				"err":  err.Error(),
-			}, time.Since(startedAt[i]))
+		id := calls[i].ID
+		err := hooks.BeforeToolCall(ctx, &calls[i])
+		// IDs are correlation keys, not a hook rewrite surface.
+		calls[i].ID = id
+		if err != nil {
+			if errors.Is(err, errYieldStopped) {
+				return false
+			}
+			if core.IsPanic(err) && r.opts.PanicPolicy == core.PanicFailRun {
+				return r.fail(yield, err)
+			}
+			results[i].Error = "rejected by hook: " + err.Error()
+			r.recordAudit(ctx, s.ID, runID, audit.AuditHookReject, "hook", map[string]any{"tool": calls[i].Name, "err": err.Error()}, 0)
 			continue
 		}
 		runnable[i] = true
 	}
-
-	concurrency := n
-	if r.opts.SequentialTools {
-		concurrency = 1
-	}
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for i := range calls {
-		if !runnable[i] {
-			continue
+	run := func(i int) {
+		if err := ctx.Err(); err != nil {
+			results[i].Error = "not executed: " + err.Error()
+			return
 		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results[i], panics[i] = r.runTool(ctx, &calls[i])
-		}(i)
+		start := time.Now()
+		executed[i] = true
+		results[i], panics[i] = r.runTool(ctx, &calls[i])
+		if panics[i] != nil && r.opts.PanicPolicy == core.PanicFailRun {
+			cancelTools()
+		}
+		durations[i] = time.Since(start)
 	}
-	wg.Wait()
-
+	if r.opts.SequentialTools {
+		for i := range calls {
+			if runnable[i] {
+				run(i)
+			}
+		}
+	} else {
+		limit := r.opts.ToolConcurrency
+		if limit <= 0 {
+			limit = 8
+		}
+		jobs := make(chan int, n)
+		for i := range calls {
+			if runnable[i] {
+				jobs <- i
+			}
+		}
+		close(jobs)
+		var wg sync.WaitGroup
+		for range min(limit, len(jobs)) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					run(i)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	var fatal error
+	for i := range calls {
+		if executed[i] {
+			id := calls[i].ID
+			err := hooks.AfterToolCall(ctx, &calls[i], &results[i])
+			calls[i].ID = id
+			if err != nil {
+				if errors.Is(err, errYieldStopped) {
+					return false
+				}
+				if core.IsPanic(err) && r.opts.PanicPolicy == core.PanicFailRun {
+					fatal = err
+				}
+				r.logger.Error("tinyagent: AfterToolCall hook failed", slog.String("tool", calls[i].Name), slog.Any("error", err))
+			}
+		}
+		if runnable[i] {
+			r.recordAudit(ctx, s.ID, runID, audit.AuditToolCall, "tool:"+calls[i].Name, map[string]any{"is_error": results[i].IsError(), "args": string(calls[i].Arguments)}, durations[i])
+		}
+	}
+	// Commit the whole batch before notifying the consumer, including panic and
+	// error results, so interrupting any notification cannot erase executed work.
+	commit()
 	for i := range calls {
 		if panics[i] != nil {
+			err := core.NewError(core.ErrKindPanic, panics[i].Component, "tool", fmt.Errorf("panic: %v", panics[i].Value))
+			r.recordAudit(ctx, s.ID, runID, audit.AuditPanic, panics[i].Component, map[string]any{"error": err.Error()}, 0)
 			if !yield(core.Event{Type: core.EventPanic, Panic: panics[i], Time: time.Now()}, nil) {
 				return false
 			}
 			if r.opts.PanicPolicy == core.PanicFailRun {
-				err := core.NewError(core.ErrKindPanic, panics[i].Component, "tool", fmt.Errorf("panic: %v", panics[i].Value))
-				yield(core.Event{Type: core.EventRunEnd, Err: err, Time: time.Now()}, err)
-				return false
+				fatal = err
 			}
 		}
-
-		if runnable[i] {
-			if err := r.hooks.AfterToolCall(ctx, &calls[i], &results[i]); err != nil {
-				r.logger.Error("tinyagent: AfterToolCall hook failed",
-					slog.String("tool", calls[i].Name), slog.Any("error", err))
-			}
-			r.recordAudit(ctx, s.ID, runID, audit.AuditToolCall, "tool:"+calls[i].Name, map[string]any{
-				"is_error": results[i].IsError(),
-				"args":     string(calls[i].Arguments),
-			}, time.Since(startedAt[i]))
-		}
-
-		if !yield(core.Event{Type: core.EventToolResult, ToolResult: &results[i], Time: time.Now()}, nil) {
+		result := results[i]
+		if !yield(core.Event{Type: core.EventToolResult, ToolResult: &result, Time: time.Now()}, nil) {
 			return false
 		}
-		s.Append(core.MessageFromToolResult(results[i]))
+	}
+	if fatal != nil {
+		return r.fail(yield, fatal)
 	}
 	return true
 }
@@ -445,7 +672,10 @@ func (r *ReActRunner) recordAudit(
 		Detail:    detail,
 		Duration:  dur,
 	}
-	if err := r.opts.Audit.Record(ctx, rec); err != nil {
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, err := core.GuardValue(r.guard, "audit", func() (struct{}, error) { return struct{}{}, r.opts.Audit.Record(auditCtx, rec) })
+	if err != nil {
 		r.logger.Error("tinyagent: audit write failed",
 			slog.String("kind", string(kind)),
 			slog.Any("error", err))
@@ -453,8 +683,8 @@ func (r *ReActRunner) recordAudit(
 }
 
 func panicInfoOf(err error) (*core.PanicInfo, bool) {
-	e, ok := core.AsError(err)
-	if !ok || e.Kind != core.ErrKindPanic {
+	e, ok := core.AsPanic(err)
+	if !ok {
 		return nil, false
 	}
 	return &core.PanicInfo{Component: e.Component, Value: e.Err, Stack: e.Stack}, true

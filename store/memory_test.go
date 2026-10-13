@@ -3,9 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"github.com/pcc-258/tinyagent/core"
 	"sync"
 	"testing"
-	"github.com/pcc-258/tinyagent/core"
 )
 
 func TestMemoryStore_AppendAndLoad(t *testing.T) {

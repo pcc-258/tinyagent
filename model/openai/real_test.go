@@ -2,10 +2,10 @@ package openai
 
 import (
 	"context"
-	"os"
-	"testing"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/model"
+	"os"
+	"testing"
 )
 
 // TestRealAPI 真实调用一次模型端点，验证 wire 格式与端到端链路。

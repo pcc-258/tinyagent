@@ -2,6 +2,16 @@ package core
 
 import "encoding/json"
 
+// CloneMessages copies message-owned slices and maps. Values inside Meta remain
+// application-owned, as with CloneMeta.
+func CloneMessages(msgs []Message) []Message {
+	out := make([]Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = CloneMessage(m)
+	}
+	return out
+}
+
 // CloneMessage 深拷贝一条消息。
 //
 // ToolCalls 与 Arguments 是切片/字节切片，必须复制，否则多个持有者

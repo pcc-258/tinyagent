@@ -2,9 +2,6 @@ package runner
 
 import (
 	"context"
-	"iter"
-	"log/slog"
-	"time"
 	"github.com/pcc-258/tinyagent/audit"
 	"github.com/pcc-258/tinyagent/core"
 	"github.com/pcc-258/tinyagent/ctxmgr"
@@ -12,6 +9,9 @@ import (
 	"github.com/pcc-258/tinyagent/model"
 	"github.com/pcc-258/tinyagent/store"
 	"github.com/pcc-258/tinyagent/tool"
+	"iter"
+	"log/slog"
+	"time"
 )
 
 // RunnerOptions 是 Runner 的注入面。
@@ -27,6 +27,12 @@ type RunnerOptions struct {
 	ContextBudget int
 	// SequentialTools 为 true 时逐个执行工具；默认并行执行且结果保序。
 	SequentialTools bool
+	// ToolConcurrency bounds parallel tools; <=0 uses 8 workers.
+	ToolConcurrency int
+	// StopConditions are evaluated after completed steps, in addition to hard limits.
+	StopConditions []StopCondition
+	// OutputReserve reserves tokens within ContextBudget and sets the output cap.
+	OutputReserve int
 	// Tools 是可调用的工具集合。
 	Tools []tool.Tool
 	// Store 是会话持久化实现。
